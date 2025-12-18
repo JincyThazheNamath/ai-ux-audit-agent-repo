@@ -78,11 +78,20 @@ export async function POST(request: NextRequest) {
     // @sparticuz/chromium-min is optimized for serverless and includes all dependencies
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
     
-    const browser = await puppeteer.launch({
-      args: isProduction ? chromium.args : ['--no-sandbox', '--disable-setuid-sandbox'],
-      executablePath: isProduction ? await chromium.executablePath() : undefined,
-      headless: true,
-    });
+    let browser;
+    try {
+      browser = await puppeteer.launch({
+        args: isProduction ? chromium.args : ['--no-sandbox', '--disable-setuid-sandbox'],
+        executablePath: isProduction ? await chromium.executablePath() : undefined,
+        headless: true,
+      });
+    } catch (browserError: any) {
+      console.error('Failed to launch browser:', browserError);
+      return NextResponse.json({ 
+        error: 'Failed to launch browser. This may be a serverless environment configuration issue.',
+        details: browserError.message || 'Browser launch failed'
+      }, { status: 500 });
+    }
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080 });
