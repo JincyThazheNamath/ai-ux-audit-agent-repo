@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium-min';
+import chromium from '@sparticuz/chromium';
 import Anthropic from '@anthropic-ai/sdk';
 
 // Validate API key on initialization
@@ -74,8 +74,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Launch browser and crawl page
-    // Use Puppeteer with @sparticuz/chromium-min for serverless environments (Vercel)
-    // @sparticuz/chromium-min is optimized for serverless and includes all dependencies
+    // Use Puppeteer with @sparticuz/chromium for serverless environments (Vercel)
+    // @sparticuz/chromium is optimized for serverless and includes all dependencies
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
     
     let browser;
@@ -87,9 +87,21 @@ export async function POST(request: NextRequest) {
       });
     } catch (browserError: any) {
       console.error('Failed to launch browser:', browserError);
+      console.error('Browser error details:', {
+        message: browserError.message,
+        stack: browserError.stack,
+        isProduction,
+        hasChromium: !!chromium,
+      });
       return NextResponse.json({ 
         error: 'Failed to launch browser. This may be a serverless environment configuration issue.',
-        details: browserError.message || 'Browser launch failed'
+        details: browserError.message || 'Browser launch failed',
+        troubleshooting: [
+          '1. Verify @sparticuz/chromium is installed correctly',
+          '2. Check Vercel environment variables',
+          '3. Ensure function timeout is sufficient (60s)',
+          '4. Check Vercel build logs for Chromium installation'
+        ]
       }, { status: 500 });
     }
 

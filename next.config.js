@@ -4,7 +4,7 @@ const nextConfig = {
     if (isServer) {
       // Exclude Chromium from server-side bundling
       config.externals = config.externals || [];
-      config.externals.push('@sparticuz/chromium-min');
+      config.externals.push('@sparticuz/chromium');
     }
     return config;
   },
