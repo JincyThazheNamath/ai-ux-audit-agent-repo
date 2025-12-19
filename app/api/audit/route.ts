@@ -86,29 +86,38 @@ export async function POST(request: NextRequest) {
 
       if (isProduction) {
         // Production: Use Chromium from @sparticuz/chromium
-        // Get executable path first
-        const executablePath = await chromium.executablePath();
-        
-        // Use chromium.args if available, otherwise use default serverless args
-        launchOptions.args = chromium.args || [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--single-process',
-          '--disable-gpu',
-          '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process',
-        ];
-        launchOptions.executablePath = executablePath;
-        
-        console.log('Production browser config:', {
-          executablePath: executablePath ? 'Found' : 'Not found',
-          argsCount: launchOptions.args.length,
-          hasChromiumArgs: !!chromium.args,
-        });
+        try {
+          // Get executable path first
+          const executablePath = await chromium.executablePath();
+          
+          if (!executablePath) {
+            throw new Error('Chromium executable path is null or undefined');
+          }
+          
+          // Use chromium.args if available, otherwise use default serverless args
+          launchOptions.args = chromium.args || [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process',
+          ];
+          launchOptions.executablePath = executablePath;
+          
+          console.log('Production browser config:', {
+            executablePath: executablePath.substring(0, 50) + '...',
+            argsCount: launchOptions.args.length,
+            hasChromiumArgs: !!chromium.args,
+          });
+        } catch (chromiumError: any) {
+          console.error('Error configuring Chromium:', chromiumError);
+          throw new Error(`Failed to configure Chromium: ${chromiumError.message}`);
+        }
       } else {
         // Development: Use local Chrome/Chromium
         launchOptions.args = [
