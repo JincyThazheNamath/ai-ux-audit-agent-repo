@@ -29,3 +29,4 @@ git push origin main
 
 **Full guide:** See `DEPLOY_TO_VERCEL_PROTOTYPE.md` for detailed instructions.
 
+
