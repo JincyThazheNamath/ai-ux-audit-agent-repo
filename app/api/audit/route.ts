@@ -80,11 +80,54 @@ export async function POST(request: NextRequest) {
     
     let browser;
     try {
-      browser = await puppeteer.launch({
-        args: isProduction ? chromium.args : ['--no-sandbox', '--disable-setuid-sandbox'],
-        executablePath: isProduction ? await chromium.executablePath() : undefined,
+      const launchOptions: any = {
         headless: true,
-      });
+      };
+
+      if (isProduction) {
+        // Production: Use Chromium from @sparticuz/chromium
+        // Get executable path first
+        const executablePath = await chromium.executablePath();
+        
+        // Use chromium.args if available, otherwise use default serverless args
+        launchOptions.args = chromium.args || [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu',
+          '--disable-web-security',
+          '--disable-features=IsolateOrigins,site-per-process',
+        ];
+        launchOptions.executablePath = executablePath;
+        
+        console.log('Production browser config:', {
+          executablePath: executablePath ? 'Found' : 'Not found',
+          argsCount: launchOptions.args.length,
+          hasChromiumArgs: !!chromium.args,
+        });
+      } else {
+        // Development: Use local Chrome/Chromium
+        launchOptions.args = [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu',
+        ];
+        
+        console.log('Development browser config: Using local Chrome/Chromium');
+      }
+
+      console.log('Launching browser...');
+      browser = await puppeteer.launch(launchOptions);
+      console.log('Browser launched successfully');
     } catch (browserError: any) {
       console.error('Failed to launch browser:', browserError);
       console.error('Browser error details:', {
@@ -92,16 +135,36 @@ export async function POST(request: NextRequest) {
         stack: browserError.stack,
         isProduction,
         hasChromium: !!chromium,
+        errorName: browserError.name,
+        chromiumArgs: isProduction ? chromium.args : 'N/A',
       });
+      
+      // Try to get more details about the error
+      let errorMessage = browserError.message || 'Browser launch failed';
+      if (browserError.message?.includes('executable')) {
+        errorMessage = 'Chromium executable not found. This may indicate a build or deployment issue.';
+      } else if (browserError.message?.includes('shared libraries')) {
+        errorMessage = 'Missing system libraries required by Chromium.';
+      } else if (browserError.message?.includes('ENOENT')) {
+        errorMessage = 'Chromium binary file not found. Check Vercel build logs.';
+      }
+      
       return NextResponse.json({ 
         error: 'Failed to launch browser. This may be a serverless environment configuration issue.',
-        details: browserError.message || 'Browser launch failed',
+        details: errorMessage,
         troubleshooting: [
-          '1. Verify @sparticuz/chromium is installed correctly',
-          '2. Check Vercel environment variables',
+          '1. Verify @sparticuz/chromium is installed correctly in package.json',
+          '2. Check Vercel build logs for Chromium installation errors',
           '3. Ensure function timeout is sufficient (60s)',
-          '4. Check Vercel build logs for Chromium installation'
-        ]
+          '4. Verify webpack externals configuration excludes Chromium from bundling',
+          '5. Check that NODE_ENV is set correctly in Vercel',
+          '6. Try redeploying to ensure Chromium binary is included'
+        ],
+        debug: {
+          isProduction,
+          nodeEnv: process.env.NODE_ENV,
+          vercel: process.env.VERCEL,
+        }
       }, { status: 500 });
     }
 
