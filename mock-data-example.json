@@ -1,0 +1,208 @@
+{
+  "url": "https://example.com",
+  "timestamp": "2025-01-15T10:30:00.000Z",
+  "summary": {
+    "totalIssues": 20,
+    "critical": 5,
+    "high": 5,
+    "medium": 5,
+    "low": 5,
+    "accessibility": 4,
+    "usability": 4,
+    "design": 4,
+    "performance": 4,
+    "seo": 4,
+    "overallScore": 0
+  },
+  "findings": [
+    {
+      "category": "accessibility",
+      "severity": "critical",
+      "issue": "Missing alt text on hero images",
+      "description": "The main hero section contains 3 images without alt attributes. Screen reader users cannot understand the visual content, violating WCAG 2.1 Level A requirements.",
+      "location": "Hero section",
+      "suggestion": "Add descriptive alt text to all images that convey meaning. Decorative images should have empty alt attributes.",
+      "codeSnippet": "<!-- Before (Missing alt text) -->\n<img src=\"hero-image.jpg\" />\n\n<!-- After (Fixed with descriptive alt text) -->\n<img src=\"hero-image.jpg\" alt=\"Team members collaborating in modern office space\" />"
+    },
+    {
+      "category": "accessibility",
+      "severity": "high",
+      "issue": "Low color contrast in navigation links",
+      "description": "Navigation links use #4A5568 on #1A2332 background, resulting in a contrast ratio of 3.2:1, which fails WCAG AA standards (requires 4.5:1 for normal text).",
+      "location": "Header navigation",
+      "suggestion": "Increase text color contrast to meet WCAG AA standards. Use a lighter shade like #E2E8F0 or add background hover states.",
+      "codeSnippet": ".nav-link { color: #E2E8F0; } /* Contrast ratio: 8.5:1 */"
+    },
+    {
+      "category": "accessibility",
+      "severity": "medium",
+      "issue": "Form inputs missing labels",
+      "description": "Contact form has 2 input fields without associated label elements or aria-labels, making them inaccessible to screen readers.",
+      "location": "Contact form",
+      "suggestion": "Add proper label elements for all form inputs, or use aria-label attributes for icon-only inputs.",
+      "codeSnippet": "<label for=\"email\">Email Address</label>\n<input type=\"email\" id=\"email\" name=\"email\" required>"
+    },
+    {
+      "category": "accessibility",
+      "severity": "low",
+      "issue": "Missing skip to main content link",
+      "description": "No skip navigation link is provided, forcing keyboard users to tab through repetitive navigation elements on every page load.",
+      "location": "Page header",
+      "suggestion": "Add a skip link as the first focusable element to allow users to bypass navigation and jump to main content.",
+      "codeSnippet": "<a href=\"#main-content\" class=\"skip-link\">Skip to main content</a>"
+    },
+    {
+      "category": "usability",
+      "severity": "critical",
+      "issue": "No error handling for form submissions",
+      "description": "Form submissions fail silently without user feedback, leaving users confused about whether their action was successful.",
+      "location": "Contact form",
+      "suggestion": "Implement clear error messages and success confirmations for all form submissions. Use visual feedback and ARIA live regions.",
+      "codeSnippet": "<div role=\"alert\" aria-live=\"polite\">\n  {error && <p className=\"error\">Please check your input</p>}\n</div>"
+    },
+    {
+      "category": "usability",
+      "severity": "high",
+      "issue": "Unclear call-to-action buttons",
+      "description": "Primary CTA buttons lack visual distinction and clear labeling. Users may struggle to identify the main action on the page.",
+      "location": "Main content area",
+      "suggestion": "Enhance button visibility with stronger contrast, larger size, and action-oriented text like \"Get Started\" instead of generic \"Click Here\".",
+      "codeSnippet": "<button class=\"cta-primary\">Get Started Free</button>"
+    },
+    {
+      "category": "usability",
+      "severity": "medium",
+      "issue": "Mobile navigation menu not intuitive",
+      "description": "The mobile hamburger menu lacks clear visual feedback when opened, and menu items are too small for touch targets (less than 44x44px).",
+      "location": "Mobile navigation",
+      "suggestion": "Increase touch target sizes to at least 44x44px and add visual indicators (animations, backdrop) when menu is open.",
+      "codeSnippet": ".mobile-menu-item {\n  min-height: 44px;\n  padding: 12px 16px;\n}"
+    },
+    {
+      "category": "usability",
+      "severity": "low",
+      "issue": "Breadcrumb navigation missing",
+      "description": "Multi-level pages lack breadcrumb navigation, making it difficult for users to understand their location and navigate back.",
+      "location": "Page header",
+      "suggestion": "Add breadcrumb navigation for pages deeper than 2 levels in the site hierarchy.",
+      "codeSnippet": "<nav aria-label=\"Breadcrumb\">\n  <ol>\n    <li><a href=\"/\">Home</a></li>\n    <li><a href=\"/products\">Products</a></li>\n  </ol>\n</nav>"
+    },
+    {
+      "category": "design",
+      "severity": "critical",
+      "issue": "Inconsistent brand colors across pages",
+      "description": "Primary brand color varies between #0066CC and #0077DD across different pages, creating visual inconsistency and brand confusion.",
+      "location": "Site-wide",
+      "suggestion": "Establish a design system with defined color palette and ensure consistent application across all pages and components.",
+      "codeSnippet": ":root {\n  --brand-primary: #0066CC;\n  --brand-secondary: #0077DD;\n}"
+    },
+    {
+      "category": "design",
+      "severity": "high",
+      "issue": "Responsive breakpoints not optimized",
+      "description": "Layout breaks at unexpected screen sizes due to inconsistent breakpoint usage, causing poor mobile and tablet experiences.",
+      "location": "Responsive layout",
+      "suggestion": "Define consistent breakpoint system (mobile: 768px, tablet: 1024px, desktop: 1280px) and test across all viewports.",
+      "codeSnippet": "@media (min-width: 768px) { /* Tablet */ }\n@media (min-width: 1024px) { /* Desktop */ }"
+    },
+    {
+      "category": "design",
+      "severity": "medium",
+      "issue": "Inconsistent spacing between sections",
+      "description": "Section spacing varies between 32px, 48px, and 64px without a clear pattern, creating visual inconsistency.",
+      "location": "Page-wide",
+      "suggestion": "Establish a consistent spacing scale (e.g., 8px base unit) and apply it consistently across all sections.",
+      "codeSnippet": ".section { margin-bottom: 4rem; } /* 64px consistent spacing */"
+    },
+    {
+      "category": "design",
+      "severity": "low",
+      "issue": "Typography scale inconsistency",
+      "description": "Heading sizes don't follow a consistent scale. H1 uses 48px while H2 uses 36px, but H3 jumps to 28px instead of maintaining ratio.",
+      "location": "Typography system",
+      "suggestion": "Establish a consistent typographic scale (e.g., 1.25x or 1.5x ratio) and apply it consistently across all heading levels.",
+      "codeSnippet": "h1 { font-size: 3rem; }\nh2 { font-size: 2.25rem; }\nh3 { font-size: 1.875rem; }"
+    },
+    {
+      "category": "performance",
+      "severity": "critical",
+      "issue": "Uncompressed images causing slow load times",
+      "description": "Hero images are 2-3MB each without compression, causing 8-12 second load times on 3G connections and high bounce rates.",
+      "location": "Hero section images",
+      "suggestion": "Compress all images using tools like TinyPNG or ImageOptim. Target file sizes under 200KB for hero images.",
+      "codeSnippet": "<!-- Use compressed images -->\n<img src=\"hero-compressed.webp\" alt=\"Description\" loading=\"eager\">"
+    },
+    {
+      "category": "performance",
+      "severity": "high",
+      "issue": "Unoptimized images without WebP format",
+      "description": "All images are served in JPEG/PNG format. Converting to WebP could reduce file sizes by 25-35%, improving page load times.",
+      "location": "Image assets",
+      "suggestion": "Convert images to WebP format with fallbacks for older browsers. Use responsive images with srcset.",
+      "codeSnippet": "<picture>\n  <source srcset=\"image.webp\" type=\"image/webp\">\n  <img src=\"image.jpg\" alt=\"Description\">\n</picture>"
+    },
+    {
+      "category": "performance",
+      "severity": "medium",
+      "issue": "No lazy loading for below-fold images",
+      "description": "All images load immediately, including those below the fold. This increases initial page load time unnecessarily.",
+      "location": "Image gallery section",
+      "suggestion": "Implement lazy loading for images below the fold using the loading=\"lazy\" attribute or Intersection Observer API.",
+      "codeSnippet": "<img src=\"image.jpg\" alt=\"Description\" loading=\"lazy\">"
+    },
+    {
+      "category": "performance",
+      "severity": "low",
+      "issue": "Missing resource hints for external fonts",
+      "description": "External Google Fonts load without preconnect hints, adding 200-300ms to font load time.",
+      "location": "HTML head",
+      "suggestion": "Add preconnect and dns-prefetch hints for external font resources to improve load performance.",
+      "codeSnippet": "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">\n<link rel=\"dns-prefetch\" href=\"https://fonts.gstatic.com\">"
+    },
+    {
+      "category": "seo",
+      "severity": "critical",
+      "issue": "Missing meta description",
+      "description": "The page lacks a meta description tag, which impacts search engine visibility and click-through rates from search results.",
+      "location": "HTML head",
+      "suggestion": "Add a compelling meta description (150-160 characters) that summarizes the page content and includes relevant keywords.",
+      "codeSnippet": "<meta name=\"description\" content=\"Your compelling 150-character description here that includes key terms and value proposition.\">"
+    },
+    {
+      "category": "seo",
+      "severity": "high",
+      "issue": "Missing structured data (Schema.org)",
+      "description": "The page lacks structured data markup, missing opportunities for rich snippets in search results.",
+      "location": "HTML head",
+      "suggestion": "Add JSON-LD structured data for Organization, WebSite, or Article schema depending on content type.",
+      "codeSnippet": "<script type=\"application/ld+json\">\n{\n  \"@context\": \"https://schema.org\",\n  \"@type\": \"Organization\",\n  \"name\": \"Your Company\"\n}\n</script>"
+    },
+    {
+      "category": "seo",
+      "severity": "medium",
+      "issue": "Missing Open Graph tags for social sharing",
+      "description": "No Open Graph meta tags are present, resulting in poor preview cards when the page is shared on social media platforms.",
+      "location": "HTML head",
+      "suggestion": "Add Open Graph meta tags (og:title, og:description, og:image) to improve social media sharing appearance.",
+      "codeSnippet": "<meta property=\"og:title\" content=\"Page Title\">\n<meta property=\"og:description\" content=\"Page description\">\n<meta property=\"og:image\" content=\"image-url.jpg\">"
+    },
+    {
+      "category": "seo",
+      "severity": "low",
+      "issue": "Missing canonical URL",
+      "description": "No canonical tag is specified, which may cause duplicate content issues if the page is accessible via multiple URLs.",
+      "location": "HTML head",
+      "suggestion": "Add a canonical URL tag to indicate the preferred version of the page for search engines.",
+      "codeSnippet": "<link rel=\"canonical\" href=\"https://example.com/page\">"
+    }
+  ],
+  "screenshot": "data:image/svg+xml;charset=utf-8,..."
+}
+
+
+
+
+
+
+
+

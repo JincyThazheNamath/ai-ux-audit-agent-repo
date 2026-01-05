@@ -1,82 +1,125 @@
-# Lunim Studio - Stage 2 Assessment
+# AI UX Audit Agent
 
-## AI UX Audit Agent
+An intelligent UX audit tool that automatically analyzes websites for accessibility, usability, design consistency, performance, and SEO issues using AI.
 
-A comprehensive case study submission demonstrating AI-powered UX analysis capabilities.
+## Features
 
-## 📁 Project Structure
+- 🤖 **AI-Powered Analysis**: Uses Claude AI to identify UX issues across multiple categories
+- 🔍 **Comprehensive Audits**: Analyzes accessibility, usability, design, performance, and SEO
+- 📊 **Prioritized Findings**: Issues categorized by severity (critical, high, medium, low)
+- 💡 **Actionable Suggestions**: Each finding includes specific recommendations and code snippets
+- 📸 **Visual Screenshots**: Captures website screenshots for context
+- ⚡ **Fast Results**: Get comprehensive audits in seconds
+
+## Tech Stack
+
+- **Next.js 16** - React framework with App Router
+- **TypeScript** - Type-safe development
+- **Tailwind CSS** - Modern styling
+- **Puppeteer** - Web scraping and screenshot capture
+- **Anthropic Claude API** - AI-powered analysis
+- **Vercel** - Deployment platform
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+ 
+- npm or yarn
+- Anthropic API key ([Get one here](https://console.anthropic.com/))
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd ux-audit-agent
+```
+
+2. Install dependencies:
+```bash
+npm install
+```
+
+3. Set up environment variables:
+```bash
+cp .env.example .env.local
+```
+
+4. Add your Anthropic API key to `.env.local`:
+```
+ANTHROPIC_API_KEY=your_api_key_here
+```
+
+5. Run the development server:
+```bash
+npm run dev
+```
+
+6. Open [http://localhost:3000](http://localhost:3000) in your browser
+
+## Usage
+
+1. Enter a website URL in the input field
+2. Click "Audit Website" or press Enter
+3. Wait for the AI analysis (typically 10-30 seconds)
+4. Review the findings organized by severity
+5. Use the suggestions and code snippets to fix issues
+
+## Project Structure
 
 ```
-CaseStudy/
-├── CASE_STUDY_SUMMARY.md          # Main summary (Why/What/Who/How)
-├── PROCESS_DOCUMENTATION.md        # AI tool usage & development process
-├── DEPLOYMENT_GUIDE.md            # Deployment instructions
-├── SUBMISSION_CHECKLIST.md        # Submission checklist
-├── README.md                      # This file
-└── ux-audit-agent/                # Working prototype
-    ├── app/                       # Next.js application
-    ├── README.md                  # Project documentation
-    └── vercel.json                # Deployment config
+ux-audit-agent/
+├── app/
+│   ├── api/
+│   │   └── audit/
+│   │       └── route.ts      # API endpoint for website analysis
+│   ├── page.tsx               # Main dashboard UI
+│   ├── layout.tsx             # Root layout
+│   └── globals.css            # Global styles
+├── public/                     # Static assets
+└── package.json               # Dependencies
 ```
 
-## 🚀 Quick Start
+## How It Works
 
-1. **Read the Summary:** `CASE_STUDY_SUMMARY.md`
-2. **Review the Process:** `PROCESS_DOCUMENTATION.md`
-3. **Deploy the App:** Follow `DEPLOYMENT_GUIDE.md`
-4. **Submit:** Use `SUBMISSION_CHECKLIST.md`
+1. **Web Crawling**: Uses Puppeteer to load and analyze the target website
+2. **Data Extraction**: Collects HTML structure, images, links, forms, and styling information
+3. **AI Analysis**: Sends structured data to Claude AI for intelligent UX analysis
+4. **Report Generation**: Formats findings with severity levels, suggestions, and code examples
+5. **Visual Display**: Presents results in an intuitive dashboard with screenshots
 
-## 📋 Deliverables
+## Deployment
 
-✅ **Summary Document** - `CASE_STUDY_SUMMARY.md`  
-✅ **Working Prototype** - `ux-audit-agent/` (ready for Vercel)  
-✅ **GitHub Repository** - Complete source code  
-✅ **Process Documentation** - `PROCESS_DOCUMENTATION.md`  
+### Deploy to Vercel
 
-## 🎯 Project Overview
+1. Push your code to GitHub
+2. Import the project in [Vercel](https://vercel.com)
+3. Add your `ANTHROPIC_API_KEY` in Vercel's environment variables
+4. Deploy!
 
-**AI UX Audit Agent** is an intelligent tool that:
-- Automatically analyzes websites for UX issues
-- Uses AI (Claude) to identify problems across 5 categories
-- Provides prioritized findings with actionable recommendations
-- Generates code snippets for suggested fixes
-- Delivers professional audit reports in seconds
+The app will be live at `https://your-project.vercel.app`
 
-## 🛠️ Technology Stack
+## Limitations
 
-- **Next.js 16** - React framework
-- **TypeScript** - Type safety
-- **Puppeteer** - Web scraping
-- **Claude AI** - Intelligent analysis
-- **Tailwind CSS** - Styling
-- **Vercel** - Deployment
+- Single-page analysis (does not crawl entire sites)
+- Requires publicly accessible URLs
+- AI analysis may vary between runs
+- Some findings may require manual verification
 
-## 📖 Documentation
+## Future Enhancements
 
-- **Case Study Summary:** `CASE_STUDY_SUMMARY.md`
-- **Process Notes:** `PROCESS_DOCUMENTATION.md`
-- **Deployment Guide:** `DEPLOYMENT_GUIDE.md`
-- **Project README:** `ux-audit-agent/README.md`
+- Multi-page crawling
+- Historical tracking and comparisons
+- Export reports as PDF
+- Integration with design tools (Figma)
+- Custom audit rule configuration
+- Performance metrics (Core Web Vitals)
 
-## 🔗 Next Steps
+## License
 
-1. Deploy to Vercel (see `DEPLOYMENT_GUIDE.md`)
-2. Capture screenshots
-3. Submit via Teams and email
+MIT
 
----
+## Built For
 
-**Built for Lunim Studio Stage 2 Assessment**  
-**Development Time:** ~8 hours  
-**Status:** Production-ready MVP
-
-
-
-
-
-
-
-
-
-
-
+Lunim Studio - Digital Services Case Study

@@ -1,0 +1,33 @@
+[build]
+  # Base directory for the build (since app is in ux-audit-agent/)
+  base = "ux-audit-agent"
+  # Build command for Next.js
+  command = "npm run build"
+  # Publish directory (Next.js static export or .next for SSR)
+  publish = ".next"
+
+# Next.js configuration
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--legacy-peer-deps"
+  NEXT_TELEMETRY_DISABLED = "1"
+
+# Serverless functions configuration
+[functions]
+  # Function timeout (60 seconds for audit API)
+  node_bundler = "esbuild"
+  # Increase timeout for audit function
+  included_files = ["**/*"]
+  # Timeout for all functions (Netlify free tier max is 10s, Pro is 26s)
+  # Note: For 60s timeout, you may need Netlify Pro or use edge functions
+
+# Headers for security
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
