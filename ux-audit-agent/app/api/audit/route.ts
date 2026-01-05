@@ -201,6 +201,32 @@ function calculateSEOScore(seoData: {
   return Math.min(100, score);
 }
 
+// Calculate overall UX score using consistent weighted formula
+// This ensures the same calculation regardless of AI response format or environment
+function calculateOverallUXScore(
+  performance: number,
+  accessibility: number,
+  design: number,
+  seo: number
+): number {
+  // Consistent weighted formula: Performance(30%) + Accessibility(30%) + Design(25%) + SEO(15%)
+  // Ensure all inputs are valid numbers
+  const perf = Math.max(0, Math.min(100, performance || 0));
+  const acc = Math.max(0, Math.min(100, accessibility || 0));
+  const des = Math.max(0, Math.min(100, design || 0));
+  const seoScore = Math.max(0, Math.min(100, seo || 0));
+  
+  const score = (
+    perf * 0.3 +
+    acc * 0.3 +
+    des * 0.25 +
+    seoScore * 0.15
+  );
+  
+  // Round to 2 decimal places for consistency
+  return Math.round(score * 100) / 100;
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Validate API key before proceeding
@@ -425,8 +451,24 @@ export async function POST(request: NextRequest) {
       };
     });
 
+    // Validate and normalize performance metrics for consistency across environments
+    const validatePerformanceMetrics = (metrics: typeof performanceMetrics): typeof performanceMetrics => {
+      return {
+        fcp: Math.max(0, metrics.fcp || 0),
+        lcp: Math.max(0, metrics.lcp || 0),
+        tti: Math.max(0, metrics.tti || 0),
+        tbt: Math.max(0, metrics.tbt || 0),
+        cls: Math.max(0, metrics.cls || 0),
+        speedIndex: Math.max(0, metrics.speedIndex || 0),
+        domContentLoaded: Math.max(0, metrics.domContentLoaded || 0),
+        loadComplete: Math.max(0, metrics.loadComplete || 0),
+      };
+    };
+
+    const validatedMetrics = validatePerformanceMetrics(performanceMetrics);
+
     // Calculate Lighthouse-style performance score
-    const calculatePerformanceScore = (metrics: typeof performanceMetrics): number => {
+    const calculatePerformanceScore = (metrics: typeof validatedMetrics): number => {
       // Handle edge cases where metrics might be 0 or unavailable
       // If all metrics are 0, return a default score of 50 (needs improvement)
       if (metrics.fcp === 0 && metrics.lcp === 0 && metrics.tti === 0) {
@@ -445,7 +487,7 @@ export async function POST(request: NextRequest) {
       return Math.max(0, Math.min(100, Math.round(totalScore)));
     };
 
-    const performanceScore = calculatePerformanceScore(performanceMetrics);
+    const performanceScore = calculatePerformanceScore(validatedMetrics);
 
     // Get accessibility snapshot
     let accessibilitySnapshot: any = null;
@@ -552,12 +594,12 @@ export async function POST(request: NextRequest) {
     const analysisPrompt = `Act as a Senior UX & SEO Auditor. Analyze the provided website using REAL METRICS and Lighthouse-calibrated scoring.
 
 ### REAL PERFORMANCE METRICS (Lighthouse-style):
-- FCP (First Contentful Paint): ${performanceMetrics.fcp}ms (thresholds: good <1800ms, needs-improvement <3000ms)
-- LCP (Largest Contentful Paint): ${performanceMetrics.lcp}ms (thresholds: good <2500ms, needs-improvement <4000ms)
-- TTI (Time to Interactive): ${performanceMetrics.tti}ms (thresholds: good <3800ms, needs-improvement <7300ms)
-- TBT (Total Blocking Time): ${performanceMetrics.tbt}ms (thresholds: good <200ms, needs-improvement <600ms)
-- CLS (Cumulative Layout Shift): ${performanceMetrics.cls} (thresholds: good <0.1, needs-improvement <0.25)
-- Speed Index: ${performanceMetrics.speedIndex}ms (thresholds: good <3400ms, needs-improvement <5800ms)
+- FCP (First Contentful Paint): ${validatedMetrics.fcp}ms (thresholds: good <1800ms, needs-improvement <3000ms)
+- LCP (Largest Contentful Paint): ${validatedMetrics.lcp}ms (thresholds: good <2500ms, needs-improvement <4000ms)
+- TTI (Time to Interactive): ${validatedMetrics.tti}ms (thresholds: good <3800ms, needs-improvement <7300ms)
+- TBT (Total Blocking Time): ${validatedMetrics.tbt}ms (thresholds: good <200ms, needs-improvement <600ms)
+- CLS (Cumulative Layout Shift): ${validatedMetrics.cls} (thresholds: good <0.1, needs-improvement <0.25)
+- Speed Index: ${validatedMetrics.speedIndex}ms (thresholds: good <3400ms, needs-improvement <5800ms)
 
 **CALCULATED PERFORMANCE SCORE**: ${performanceScore}/100 (using Lighthouse weighted formula)
 
@@ -751,25 +793,39 @@ Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
           // Newest format with scores object and weighted calculation
           const auditData = JSON.parse(scoresFormatMatch[0]);
           if (auditData.scores) {
-            // Use real calculated scores for performance, accessibility, and SEO
+            // ALWAYS use server-calculated scores for performance, accessibility, and SEO
+            // NEVER use AI-provided values for these - they must match our calculations
             // Only use AI-provided design score
             categoryScores = {
-              performance: auditData.scores.performance || performanceScore,
-              accessibility: auditData.scores.accessibility || accessibilityScore,
+              performance: performanceScore, // Force use of calculated score
+              accessibility: accessibilityScore, // Force use of calculated score
               usability: auditData.scores.usability || 0,
               design: auditData.scores.design || 0,
-              seo: auditData.scores.seo || seoScore,
+              seo: seoScore, // Force use of calculated score
             };
-            // Calculate overall score using weighted formula: (Performance*0.3 + Accessibility*0.3 + Design*0.25 + SEO*0.15)
-            uxScore = Math.round((
-              categoryScores.performance * 0.3 +
-              categoryScores.accessibility * 0.3 +
-              categoryScores.design * 0.25 +
-              categoryScores.seo * 0.15
-            ) * 100) / 100; // Round to 2 decimal places
+            // Always recalculate overall score server-side using standardized function
+            uxScore = calculateOverallUXScore(
+              categoryScores.performance,
+              categoryScores.accessibility,
+              categoryScores.design,
+              categoryScores.seo
+            );
           } else {
-            // Fallback to overall_ux_score if scores not provided
-            uxScore = auditData.overall_ux_score || 0;
+            // If scores object not provided, use calculated scores and default design
+            categoryScores = {
+              performance: performanceScore,
+              accessibility: accessibilityScore,
+              usability: 0,
+              design: 70, // Default design score if not provided
+              seo: seoScore,
+            };
+            // Always recalculate overall score server-side
+            uxScore = calculateOverallUXScore(
+              categoryScores.performance,
+              categoryScores.accessibility,
+              categoryScores.design,
+              categoryScores.seo
+            );
           }
           justification = auditData.justification || '';
           severityBreakdown = auditData.severity_breakdown || { critical: 0, high: 0, medium: 0, low: 0 };
@@ -777,7 +833,21 @@ Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
         } else if (uxScoreFormatMatch) {
           // Format with ux_score, severity_breakdown, top_issues
           const auditData = JSON.parse(uxScoreFormatMatch[0]);
-          uxScore = auditData.ux_score || 0;
+          // Ignore AI's ux_score, always recalculate using calculated scores
+          categoryScores = {
+            performance: performanceScore,
+            accessibility: accessibilityScore,
+            usability: 0,
+            design: 70, // Default if not provided
+            seo: seoScore,
+          };
+          // Always recalculate overall score server-side
+          uxScore = calculateOverallUXScore(
+            categoryScores.performance,
+            categoryScores.accessibility,
+            categoryScores.design,
+            categoryScores.seo
+          );
           severityBreakdown = auditData.severity_breakdown || { critical: 0, high: 0, medium: 0, low: 0 };
           findings = auditData.top_issues || [];
         } else if (jsonArrayMatch) {
@@ -791,17 +861,26 @@ Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
             low: findings.filter(f => f.severity === 'low').length,
           };
           // Use real metrics for performance, accessibility, SEO, and calculate design from findings
-          uxScore = Math.round((
-            performanceScore * 0.3 +
-            accessibilityScore * 0.3 +
-            Math.max(0, 100 - (
-              severityBreakdown.critical * 15 +
-              severityBreakdown.high * 10 +
-              severityBreakdown.medium * 5 +
-              severityBreakdown.low * 2
-            )) * 0.25 +
-            seoScore * 0.15
-          ) * 100) / 100;
+          const designScore = Math.max(0, 100 - (
+            severityBreakdown.critical * 15 +
+            severityBreakdown.high * 10 +
+            severityBreakdown.medium * 5 +
+            severityBreakdown.low * 2
+          ));
+          categoryScores = {
+            performance: performanceScore,
+            accessibility: accessibilityScore,
+            usability: 0,
+            design: designScore,
+            seo: seoScore,
+          };
+          // Always recalculate overall score server-side using standardized function
+          uxScore = calculateOverallUXScore(
+            categoryScores.performance,
+            categoryScores.accessibility,
+            categoryScores.design,
+            categoryScores.seo
+          );
         }
       }
     } catch (error) {
@@ -825,14 +904,26 @@ Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
         design: 70, 
         seo: seoScore 
       };
-      uxScore = Math.round((
-        performanceScore * 0.3 +
-        accessibilityScore * 0.3 +
-        70 * 0.25 +
-        seoScore * 0.15
-      ) * 100) / 100;
+      // Always recalculate overall score server-side using standardized function
+      uxScore = calculateOverallUXScore(
+        categoryScores.performance,
+        categoryScores.accessibility,
+        categoryScores.design,
+        categoryScores.seo
+      );
       justification = 'Fallback score due to parsing error - using real metrics where available';
     }
+
+    // Environment-aware logging for debugging score differences (backend only, no UI impact)
+    const environment = process.env.VERCEL === '1' ? 'Vercel' : 'Local';
+    console.log(`[${environment}] Score Calculation:`, {
+      performance: categoryScores.performance,
+      accessibility: categoryScores.accessibility,
+      design: categoryScores.design,
+      seo: categoryScores.seo,
+      overall: uxScore,
+      formula: 'Performance(30%) + Accessibility(30%) + Design(25%) + SEO(15%)',
+    });
 
     // Calculate summary using AI-provided data or calculated values
     const summary = {
@@ -856,12 +947,12 @@ Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
       summary,
       screenshot: `data:image/png;base64,${screenshot}`,
       realMetrics: {
-        fcp: performanceMetrics.fcp,
-        lcp: performanceMetrics.lcp,
-        tti: performanceMetrics.tti,
-        tbt: performanceMetrics.tbt,
-        cls: performanceMetrics.cls,
-        speedIndex: performanceMetrics.speedIndex,
+        fcp: validatedMetrics.fcp,
+        lcp: validatedMetrics.lcp,
+        tti: validatedMetrics.tti,
+        tbt: validatedMetrics.tbt,
+        cls: validatedMetrics.cls,
+        speedIndex: validatedMetrics.speedIndex,
       },
     };
 
