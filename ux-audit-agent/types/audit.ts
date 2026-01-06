@@ -34,6 +34,16 @@ export interface AuditResult {
     cls: number;
     speedIndex: number;
   };
+  systemFingerprint?: {
+    environment: string;
+    model: string;
+    modelVersion: string;
+    nodeVersion: string;
+    viewport: string;
+    temperature: number;
+    runtime: string;
+    timestamp: string;
+  };
 }
 
 
