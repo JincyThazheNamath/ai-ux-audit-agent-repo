@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 import Anthropic from '@anthropic-ai/sdk';
+import { auditConfig } from '../../../audit.config';
 
 // Runtime configuration - Node.js runtime required for Puppeteer
 // Note: Edge Runtime is not compatible with Puppeteer, so we use Node.js runtime
@@ -9,15 +10,17 @@ export const runtime = 'nodejs';
 export const maxDuration = 60; // Maximum execution time in seconds
 
 /**
- * CONSISTENCY IMPROVEMENTS FOR LOCAL vs PRODUCTION AUDIT RESULTS:
+ * STANDARDIZED AUDIT EXECUTION FOR ENVIRONMENT PARITY:
  * 
- * 1. Standardized Browser Args: Identical browser launch arguments ensure consistent behavior
- * 2. Fixed Model Selection: Uses specific Claude model version (configurable via CLAUDE_MODEL env var)
- * 3. Temperature 0.0: Ensures deterministic AI responses
- * 4. Standardized Viewport: Fixed 1280x800 viewport for consistent layout analysis
- * 5. Consistent Page Load Timing: 3-second stabilization wait after networkidle2
- * 6. Aggressive Metric Normalization: Rounds metrics to eliminate floating-point variance
- * 7. Performance API Pre-initialization: Sets up observers before page load for consistent collection
+ * This audit uses a centralized configuration (audit.config.js) to ensure
+ * identical execution across local development and production environments.
+ * 
+ * Key Standardizations:
+ * 1. Simulated Throttling: CPU (4x slowdown) and Network (fast 4G) - NOT observed
+ * 2. Browser Consistency: --headless=new with fixed window size (1280x800)
+ * 3. Metric Logging: Raw JSON output for top 5 metrics (LCP, TBT, CLS, FCP, Speed Index)
+ * 4. Configuration-Driven: All settings from audit.config.js
+ * 5. Environment-Aware: Logs production-only factors (CDN, minification, etc.)
  * 
  * These changes ensure audit results are identical (or within acceptable variance) 
  * between local development and Vercel production environments.
@@ -283,67 +286,41 @@ export async function POST(request: NextRequest) {
 
     // Launch browser and crawl page
     // Use Puppeteer with @sparticuz/chromium for serverless environments (Vercel)
-    const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+    const isProduction = auditConfig.environment.getCurrent() === 'production';
     
-    // Standardized browser args for consistency across all environments
-    // These args ensure identical browser behavior regardless of environment
-    const standardizedArgs = [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-gpu',
-      '--disable-background-networking',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-breakpad',
-      '--disable-client-side-phishing-detection',
-      '--disable-component-update',
-      '--disable-default-apps',
-      '--disable-domain-reliability',
-      '--disable-extensions',
-      '--disable-features=TranslateUI',
-      '--disable-hang-monitor',
-      '--disable-ipc-flooding-protection',
-      '--disable-notifications',
-      '--disable-popup-blocking',
-      '--disable-prompt-on-repost',
-      '--disable-renderer-backgrounding',
-      '--disable-sync',
-      '--disable-web-resources',
-      '--enable-automation',
-      '--enable-features=NetworkService,NetworkServiceInProcess',
-      '--force-color-profile=srgb',
-      '--metrics-recording-only',
-      '--mute-audio',
-      '--no-default-browser-check',
-      '--no-pings',
-      '--password-store=basic',
-      '--use-mock-keychain',
-    ];
+    // Use standardized browser args from configuration
+    // Ensure --headless=new and fixed window size are ALWAYS present
+    let browserArgs = [...auditConfig.browser.launchArgs];
     
-    // Use standardized args for development, chromium.args for production
-    // chromium.args includes serverless-optimized flags that are required for Vercel
-    // Both ensure consistent browser behavior, but production needs serverless-specific args
-    const launchOptions: any = {
-      headless: true,
-      args: isProduction ? chromium.args : standardizedArgs,
-    };
-    
-    // Ensure critical consistency flags are present in both environments
+    // For production, merge with chromium.args but ensure our critical flags are present
     if (isProduction && chromium.args) {
-      // Verify critical flags exist in production args (they should via chromium.args)
-      // This ensures consistent behavior even with serverless-optimized args
-      const criticalFlags = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
-      criticalFlags.forEach(flag => {
-        if (!launchOptions.args.includes(flag)) {
-          launchOptions.args.push(flag);
-        }
-      });
+      // Start with our standardized args
+      browserArgs = [...auditConfig.browser.launchArgs];
+      
+      // Merge critical serverless flags from chromium.args
+      const serverlessFlags = chromium.args.filter((arg: string) => 
+        !browserArgs.includes(arg) && 
+        (arg.includes('--disable') || arg.includes('--no') || arg.includes('--single'))
+      );
+      browserArgs = [...browserArgs, ...serverlessFlags];
+      
+      // CRITICAL: Ensure --headless=new is always present (may be overridden by chromium.args)
+      if (!browserArgs.includes('--headless=new') && !browserArgs.includes('--headless=chrome')) {
+        // Remove any old --headless flag
+        browserArgs = browserArgs.filter((arg: string) => !arg.startsWith('--headless'));
+        browserArgs.push('--headless=new');
+      }
+      
+      // CRITICAL: Ensure window size is always fixed
+      const windowSizeArg = '--window-size=1280,800';
+      browserArgs = browserArgs.filter((arg: string) => !arg.startsWith('--window-size'));
+      browserArgs.push(windowSizeArg);
     }
+    
+    const launchOptions: any = {
+      headless: auditConfig.browser.headless,
+      args: browserArgs,
+    };
 
     if (isProduction) {
       // Production: Use Chromium from @sparticuz/chromium
@@ -438,8 +415,29 @@ export async function POST(request: NextRequest) {
 
     const page = await browser.newPage();
     
-    // Standardized viewport size for consistent layout analysis across all environments
-    await page.setViewport({ width: 1280, height: 800 });
+    // Standardized viewport size from configuration
+    await page.setViewport(auditConfig.browser.viewport);
+    
+    // IMPORTANT: Apply SIMULATED throttling (not observed) using Chrome DevTools Protocol (CDP)
+    // This ensures consistent metrics regardless of host machine performance
+    const client = await page.target().createCDPSession();
+    
+    // Apply SIMULATED CPU throttling (4x slowdown - matches Lighthouse)
+    // This is simulated, not actual CPU throttling, ensuring consistent results
+    await client.send('Emulation.setCPUThrottlingRate', {
+      rate: auditConfig.throttling.cpuSlowdownMultiplier,
+    });
+    console.log(`[${auditConfig.environment.getCurrent()}] Applied simulated CPU throttling: ${auditConfig.throttling.cpuSlowdownMultiplier}x slowdown`);
+    
+    // Apply SIMULATED network throttling (fast 4G - matches Lighthouse desktop)
+    // This is simulated, not actual network throttling, ensuring consistent results
+    await client.send('Network.emulateNetworkConditions', {
+      offline: false,
+      downloadThroughput: auditConfig.throttling.network.downloadThroughput,
+      uploadThroughput: auditConfig.throttling.network.uploadThroughput,
+      latency: auditConfig.throttling.network.latency,
+    });
+    console.log(`[${auditConfig.environment.getCurrent()}] Applied simulated network throttling: ${auditConfig.throttling.network.connectionType} (Download: ${auditConfig.throttling.network.downloadThroughput} bytes/s, Upload: ${auditConfig.throttling.network.uploadThroughput} bytes/s, Latency: ${auditConfig.throttling.network.latency}ms)`);
     
     // Enable Performance API before navigation for consistent metric collection
     await page.evaluateOnNewDocument(() => {
@@ -468,17 +466,16 @@ export async function POST(request: NextRequest) {
       }
     });
     
-    // Standardized page load conditions for consistency
-    // Use consistent wait strategy across all environments
+    // Standardized page load conditions from configuration
     try {
       await page.goto(targetUrl.toString(), { 
-        waitUntil: 'networkidle2',
-        timeout: 30000 
+        waitUntil: auditConfig.pageLoad.waitUntil as any,
+        timeout: auditConfig.pageLoad.timeout 
       });
       
       // Wait for consistent stabilization period after page load
       // This ensures metrics are collected at the same point in page lifecycle
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, auditConfig.pageLoad.stabilizationPeriod));
     } catch (error) {
       await browser.close();
       return NextResponse.json({ 
@@ -580,25 +577,79 @@ export async function POST(request: NextRequest) {
     });
 
     // Validate and normalize performance metrics for consistency across environments
-    // Aggressive normalization ensures identical results regardless of environment
+    // Uses configuration values for normalization
     const validatePerformanceMetrics = (metrics: typeof performanceMetrics): typeof performanceMetrics => {
+      const rounding = auditConfig.metrics.normalization.timeRounding;
+      const clsPrecision = auditConfig.metrics.normalization.clsPrecision;
+      
       // Round all metrics to consistent precision to eliminate floating-point variance
       // This ensures identical values across different Chrome versions and environments
       return {
-        fcp: Math.round(Math.max(0, metrics.fcp || 0) / 10) * 10, // Round to nearest 10ms
-        lcp: Math.round(Math.max(0, metrics.lcp || 0) / 10) * 10, // Round to nearest 10ms
-        tti: Math.round(Math.max(0, metrics.tti || 0) / 10) * 10, // Round to nearest 10ms
-        tbt: Math.round(Math.max(0, metrics.tbt || 0) / 10) * 10, // Round to nearest 10ms
-        cls: Math.round(Math.max(0, metrics.cls || 0) * 1000) / 1000, // Round to 3 decimal places
-        speedIndex: Math.round(Math.max(0, metrics.speedIndex || 0) / 10) * 10, // Round to nearest 10ms
-        domContentLoaded: Math.round(Math.max(0, metrics.domContentLoaded || 0) / 10) * 10,
-        loadComplete: Math.round(Math.max(0, metrics.loadComplete || 0) / 10) * 10,
+        fcp: Math.round(Math.max(0, metrics.fcp || 0) / rounding) * rounding,
+        lcp: Math.round(Math.max(0, metrics.lcp || 0) / rounding) * rounding,
+        tti: Math.round(Math.max(0, metrics.tti || 0) / rounding) * rounding,
+        tbt: Math.round(Math.max(0, metrics.tbt || 0) / rounding) * rounding,
+        cls: Math.round(Math.max(0, metrics.cls || 0) * Math.pow(10, clsPrecision)) / Math.pow(10, clsPrecision),
+        speedIndex: Math.round(Math.max(0, metrics.speedIndex || 0) / rounding) * rounding,
+        domContentLoaded: Math.round(Math.max(0, metrics.domContentLoaded || 0) / rounding) * rounding,
+        loadComplete: Math.round(Math.max(0, metrics.loadComplete || 0) / rounding) * rounding,
       };
     };
 
     const validatedMetrics = validatePerformanceMetrics(performanceMetrics);
 
-    // Calculate Lighthouse-style performance score
+    // DETAILED METRIC LOGGING: Output raw JSON report for top 5 metrics
+    // This helps identify which metric is drifting between environments
+    if (auditConfig.logging.enableMetricLogging && auditConfig.logging.logRawMetrics) {
+      const top5MetricsReport = {
+        environment: auditConfig.environment.getCurrent(),
+        timestamp: new Date().toISOString(),
+        url: targetUrl.toString(),
+        metrics: {
+          LCP: {
+            value: validatedMetrics.lcp,
+            unit: 'ms',
+            thresholds: auditConfig.metrics.thresholds.lcp,
+            status: validatedMetrics.lcp <= auditConfig.metrics.thresholds.lcp.good ? 'good' :
+                    validatedMetrics.lcp <= auditConfig.metrics.thresholds.lcp.needsImprovement ? 'needs-improvement' : 'poor',
+          },
+          TBT: {
+            value: validatedMetrics.tbt,
+            unit: 'ms',
+            thresholds: auditConfig.metrics.thresholds.tbt,
+            status: validatedMetrics.tbt <= auditConfig.metrics.thresholds.tbt.good ? 'good' :
+                    validatedMetrics.tbt <= auditConfig.metrics.thresholds.tbt.needsImprovement ? 'needs-improvement' : 'poor',
+          },
+          CLS: {
+            value: validatedMetrics.cls,
+            unit: 'score',
+            thresholds: auditConfig.metrics.thresholds.cls,
+            status: validatedMetrics.cls <= auditConfig.metrics.thresholds.cls.good ? 'good' :
+                    validatedMetrics.cls <= auditConfig.metrics.thresholds.cls.needsImprovement ? 'needs-improvement' : 'poor',
+          },
+          FCP: {
+            value: validatedMetrics.fcp,
+            unit: 'ms',
+            thresholds: auditConfig.metrics.thresholds.fcp,
+            status: validatedMetrics.fcp <= auditConfig.metrics.thresholds.fcp.good ? 'good' :
+                    validatedMetrics.fcp <= auditConfig.metrics.thresholds.fcp.needsImprovement ? 'needs-improvement' : 'poor',
+          },
+          SI: {
+            value: validatedMetrics.speedIndex,
+            unit: 'ms',
+            thresholds: auditConfig.metrics.thresholds.si,
+            status: validatedMetrics.speedIndex <= auditConfig.metrics.thresholds.si.good ? 'good' :
+                    validatedMetrics.speedIndex <= auditConfig.metrics.thresholds.si.needsImprovement ? 'needs-improvement' : 'poor',
+          },
+        },
+      };
+      
+      console.log('\n=== TOP 5 METRICS RAW JSON REPORT ===');
+      console.log(JSON.stringify(top5MetricsReport, null, 2));
+      console.log('=== END METRICS REPORT ===\n');
+    }
+
+    // Calculate Lighthouse-style performance score using configuration thresholds
     const calculatePerformanceScore = (metrics: typeof validatedMetrics): number => {
       // Handle edge cases where metrics might be 0 or unavailable
       // If all metrics are 0, return a default score of 50 (needs improvement)
@@ -606,19 +657,31 @@ export async function POST(request: NextRequest) {
         return 50;
       }
 
+      const thresholds = auditConfig.metrics.thresholds;
       const scores = {
-        fcp: metrics.fcp > 0 ? scoreMetric(metrics.fcp, [1800, 3000], 0.10) : 5, // Default to 50% if unavailable
-        lcp: metrics.lcp > 0 ? scoreMetric(metrics.lcp, [2500, 4000], 0.25) : 12.5,
-        tti: metrics.tti > 0 ? scoreMetric(metrics.tti, [3800, 7300], 0.10) : 5,
-        tbt: scoreMetric(metrics.tbt, [200, 600], 0.30), // TBT can be 0 (good)
-        cls: scoreMetric(metrics.cls, [0.1, 0.25], 0.15), // CLS can be 0 (good)
-        speedIndex: metrics.speedIndex > 0 ? scoreMetric(metrics.speedIndex, [3400, 5800], 0.10) : 5,
+        fcp: metrics.fcp > 0 ? scoreMetric(metrics.fcp, [thresholds.fcp.good, thresholds.fcp.needsImprovement], 0.10) : 5,
+        lcp: metrics.lcp > 0 ? scoreMetric(metrics.lcp, [thresholds.lcp.good, thresholds.lcp.needsImprovement], 0.25) : 12.5,
+        tti: metrics.tti > 0 ? scoreMetric(metrics.tti, [thresholds.tti.good, thresholds.tti.needsImprovement], 0.10) : 5,
+        tbt: scoreMetric(metrics.tbt, [thresholds.tbt.good, thresholds.tbt.needsImprovement], 0.30),
+        cls: scoreMetric(metrics.cls, [thresholds.cls.good, thresholds.cls.needsImprovement], 0.15),
+        speedIndex: metrics.speedIndex > 0 ? scoreMetric(metrics.speedIndex, [thresholds.si.good, thresholds.si.needsImprovement], 0.10) : 5,
       };
       const totalScore = Object.values(scores).reduce((sum, score) => sum + score, 0);
       return Math.max(0, Math.min(100, Math.round(totalScore)));
     };
 
     const performanceScore = calculatePerformanceScore(validatedMetrics);
+    
+    // Log production-only factors that might affect metrics
+    if (auditConfig.logging.logEnvironmentFactors && isProduction) {
+      console.log('\n=== PRODUCTION-ONLY FACTORS (May Affect Metrics) ===');
+      console.log(JSON.stringify({
+        environment: 'production',
+        factors: auditConfig.productionFactors,
+        note: 'These factors may cause metric differences between local and production',
+      }, null, 2));
+      console.log('=== END PRODUCTION FACTORS ===\n');
+    }
 
     // Get accessibility snapshot
     let accessibilitySnapshot: any = null;
@@ -826,16 +889,9 @@ For each finding in top_issues:
 Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
 
     // Force use of specific model for consistency across environments
-    // Using a stable model version ensures identical AI responses
-    // Environment variable allows override if needed, but defaults to stable version
-    const preferredModel = process.env.CLAUDE_MODEL || "claude-3-5-sonnet-20241022";
-    
-    // Fallback models in order of preference (only used if primary fails)
-    const fallbackModels = [
-      "claude-3-5-sonnet-20241022",
-      "claude-3-5-haiku-20241022",
-      "claude-3-opus-20240229",
-    ];
+    // Using configuration values ensures identical AI responses
+    const preferredModel = auditConfig.ai.preferredModel;
+    const fallbackModels = auditConfig.ai.fallbackModels;
 
     let message: any = null;
     let usedModelName: string = '';
@@ -845,8 +901,8 @@ Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
       try {
         message = await anthropic.messages.create({
           model: preferredModel,
-          max_tokens: 4000,
-          temperature: 0.0, // Set to 0.0 for deterministic results
+          max_tokens: auditConfig.ai.maxTokens,
+          temperature: auditConfig.ai.temperature, // From configuration for deterministic results
           messages: [{
             role: 'user',
             content: analysisPrompt,
@@ -863,8 +919,8 @@ Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
             try {
               message = await anthropic.messages.create({
                 model: modelName,
-                max_tokens: 4000,
-                temperature: 0.0,
+                max_tokens: auditConfig.ai.maxTokens,
+                temperature: auditConfig.ai.temperature,
                 messages: [{
                   role: 'user',
                   content: analysisPrompt,

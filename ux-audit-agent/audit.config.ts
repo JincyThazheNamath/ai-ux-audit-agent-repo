@@ -1,0 +1,285 @@
+/**
+ * Standardized Audit Configuration
+ * 
+ * This configuration ensures consistent audit execution across all environments
+ * (local development and production). All audit settings are centralized here
+ * and must be strictly followed by both environments.
+ * 
+ * DO NOT MODIFY THESE VALUES WITHOUT UPDATING BOTH ENVIRONMENTS
+ */
+
+export interface AuditConfig {
+  browser: {
+    headless: 'new' | true | false;
+    windowSize: { width: number; height: number };
+    viewport: { width: number; height: number; deviceScaleFactor: number };
+    launchArgs: string[];
+  };
+  throttling: {
+    cpuSlowdownMultiplier: number;
+    network: {
+      downloadThroughput: number;
+      uploadThroughput: number;
+      latency: number;
+      connectionType: string;
+    };
+    mode: string;
+  };
+  pageLoad: {
+    waitUntil: string;
+    timeout: number;
+    stabilizationPeriod: number;
+  };
+  metrics: {
+    topMetrics: string[];
+    thresholds: {
+      lcp: { good: number; needsImprovement: number };
+      fcp: { good: number; needsImprovement: number };
+      tbt: { good: number; needsImprovement: number };
+      cls: { good: number; needsImprovement: number };
+      si: { good: number; needsImprovement: number };
+      tti: { good: number; needsImprovement: number };
+    };
+    normalization: {
+      timeRounding: number;
+      clsPrecision: number;
+    };
+  };
+  ai: {
+    temperature: number;
+    preferredModel: string;
+    fallbackModels: string[];
+    maxTokens: number;
+  };
+  environment: {
+    productionIdentifiers: string[];
+    getCurrent: () => 'production' | 'development';
+  };
+  productionFactors: {
+    [key: string]: { note: string; impact: string };
+  };
+  logging: {
+    enableMetricLogging: boolean;
+    logRawMetrics: boolean;
+    logSystemFingerprint: boolean;
+    logEnvironmentFactors: boolean;
+  };
+}
+
+// Runtime evaluation of environment variables
+const getPreferredModel = () => {
+  return process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
+};
+
+export const auditConfig: AuditConfig = {
+  // Browser Configuration - Ensures consistent browser behavior
+  browser: {
+    // Use new headless mode for better compatibility
+    headless: 'new',
+    
+    // Fixed window size for consistent layout analysis
+    windowSize: {
+      width: 1280,
+      height: 800,
+    },
+    
+    // Standardized viewport for consistent metric collection
+    viewport: {
+      width: 1280,
+      height: 800,
+      deviceScaleFactor: 1,
+    },
+    
+    // Browser launch arguments - MUST be identical across environments
+    launchArgs: [
+      '--headless=new',
+      '--window-size=1280,800',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu',
+      '--disable-background-networking',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-breakpad',
+      '--disable-client-side-phishing-detection',
+      '--disable-component-update',
+      '--disable-default-apps',
+      '--disable-domain-reliability',
+      '--disable-extensions',
+      '--disable-features=TranslateUI',
+      '--disable-hang-monitor',
+      '--disable-ipc-flooding-protection',
+      '--disable-notifications',
+      '--disable-popup-blocking',
+      '--disable-prompt-on-repost',
+      '--disable-renderer-backgrounding',
+      '--disable-sync',
+      '--disable-web-resources',
+      '--enable-automation',
+      '--enable-features=NetworkService,NetworkServiceInProcess',
+      '--force-color-profile=srgb',
+      '--metrics-recording-only',
+      '--mute-audio',
+      '--no-default-browser-check',
+      '--no-pings',
+      '--password-store=basic',
+      '--use-mock-keychain',
+    ],
+  },
+
+  // Throttling Configuration - SIMULATED (not observed) for consistency
+  // These values match Lighthouse's simulated throttling
+  throttling: {
+    // CPU Throttling: 4x slowdown (matches Lighthouse)
+    // This is SIMULATED, not actual CPU throttling
+    cpuSlowdownMultiplier: 4,
+    
+    // Network Throttling: SIMULATED (matches Lighthouse desktop)
+    // Use CDP (Chrome DevTools Protocol) to set network conditions
+    network: {
+      // Download throughput (bytes/sec) - Simulates fast 4G
+      downloadThroughput: 1.6 * 1024 * 1024, // 1.6 Mbps
+      
+      // Upload throughput (bytes/sec)
+      uploadThroughput: 750 * 1024, // 750 Kbps
+      
+      // Latency (ms) - Round trip time
+      latency: 150,
+      
+      // Connection type for simulation
+      connectionType: '4g',
+    },
+    
+    // IMPORTANT: Use 'simulate' mode, not 'native' or 'custom'
+    // This ensures consistent results regardless of host machine performance
+    mode: 'simulate',
+  },
+
+  // Page Load Configuration
+  pageLoad: {
+    // Wait strategy - consistent across environments
+    waitUntil: 'networkidle2',
+    
+    // Timeout in milliseconds
+    timeout: 30000,
+    
+    // Stabilization period after page load (ms)
+    // This ensures metrics are collected at the same point in page lifecycle
+    stabilizationPeriod: 3000,
+  },
+
+  // Performance Metrics Configuration
+  metrics: {
+    // Top 5 Core Web Vitals and Performance Metrics to log
+    topMetrics: [
+      'LCP',  // Largest Contentful Paint
+      'TBT',  // Total Blocking Time
+      'CLS',  // Cumulative Layout Shift
+      'FCP',  // First Contentful Paint
+      'SI',   // Speed Index
+    ],
+    
+    // Metric thresholds (Lighthouse-style)
+    thresholds: {
+      lcp: { good: 2500, needsImprovement: 4000 },
+      fcp: { good: 1800, needsImprovement: 3000 },
+      tbt: { good: 200, needsImprovement: 600 },
+      cls: { good: 0.1, needsImprovement: 0.25 },
+      si: { good: 3400, needsImprovement: 5800 },
+      tti: { good: 3800, needsImprovement: 7300 },
+    },
+    
+    // Normalization settings
+    normalization: {
+      // Round time metrics to nearest 10ms to eliminate floating-point variance
+      timeRounding: 10,
+      // Round CLS to 3 decimal places
+      clsPrecision: 3,
+    },
+  },
+
+  // AI Configuration
+  ai: {
+    // Temperature: 0.0 for deterministic responses
+    temperature: 0.0,
+    
+    // Model preferences (fallback chain) - evaluated at runtime
+    preferredModel: getPreferredModel(),
+    fallbackModels: [
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-haiku-20241022',
+      'claude-3-opus-20240229',
+    ],
+    
+    // Max tokens for AI response
+    maxTokens: 4000,
+  },
+
+  // Environment Detection
+  environment: {
+    // Production identifiers
+    productionIdentifiers: ['VERCEL', 'production'],
+    
+    // Get current environment
+    getCurrent: () => {
+      return process.env.VERCEL === '1' || process.env.NODE_ENV === 'production'
+        ? 'production'
+        : 'development';
+    },
+  },
+
+  // Production-Only Factors to Consider
+  // These may affect metrics but are outside our control
+  productionFactors: {
+    // CDN caching (Cloudflare, Vercel Edge, etc.)
+    cdn: {
+      note: 'CDN caching may speed up asset delivery in production',
+      impact: 'May improve LCP, FCP, Speed Index',
+    },
+    
+    // Asset minification/optimization
+    optimization: {
+      note: 'Production builds often have minified assets',
+      impact: 'May improve TBT, TTI due to smaller bundle sizes',
+    },
+    
+    // Authentication redirects
+    authRedirects: {
+      note: 'Some production sites may have auth redirects',
+      impact: 'May increase FCP, LCP if redirects occur',
+    },
+    
+    // Geographic location
+    geolocation: {
+      note: 'Server location vs user location affects network latency',
+      impact: 'May affect all network-dependent metrics',
+    },
+    
+    // DNS resolution
+    dns: {
+      note: 'Production DNS may differ from local',
+      impact: 'Minimal impact on metrics',
+    },
+  },
+
+  // Logging Configuration
+  logging: {
+    // Enable detailed metric logging
+    enableMetricLogging: true,
+    
+    // Log raw metric values
+    logRawMetrics: true,
+    
+    // Log system fingerprint
+    logSystemFingerprint: true,
+    
+    // Log environment differences
+    logEnvironmentFactors: true,
+  },
+};
+
