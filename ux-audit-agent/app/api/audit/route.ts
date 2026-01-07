@@ -1101,15 +1101,27 @@ Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
     };
 
     // System Fingerprint for deterministic auditing
+    // ALWAYS ensure these fields are included with explicit values (never undefined)
     const systemFingerprint = {
-      environment: environment,
+      environment: environment || 'unknown',
       model: usedModelName || 'unknown',
       modelVersion: usedModelName || 'unknown',
-      nodeVersion: process.version,
+      nodeVersion: process.version || 'unknown',
       viewport: '1280x800',
       temperature: 0.0,
       runtime: 'nodejs',
       timestamp: new Date().toISOString(),
+    };
+
+    // ALWAYS ensure realMetrics has explicit values (never undefined/null)
+    // This ensures the fields are always included in production responses
+    const realMetricsData = {
+      fcp: validatedMetrics?.fcp ?? 0,
+      lcp: validatedMetrics?.lcp ?? 0,
+      tti: validatedMetrics?.tti ?? 0,
+      tbt: validatedMetrics?.tbt ?? 0,
+      cls: validatedMetrics?.cls ?? 0,
+      speedIndex: validatedMetrics?.speedIndex ?? 0,
     };
 
     const result: AuditResult = {
@@ -1118,21 +1130,23 @@ Focus on the most impactful issues. Return 8-15 findings in top_issues array.`;
       findings,
       summary,
       screenshot: `data:image/png;base64,${screenshot}`,
-      realMetrics: {
-        fcp: validatedMetrics.fcp,
-        lcp: validatedMetrics.lcp,
-        tti: validatedMetrics.tti,
-        tbt: validatedMetrics.tbt,
-        cls: validatedMetrics.cls,
-        speedIndex: validatedMetrics.speedIndex,
-      },
+      // EXPLICITLY include these fields - never optional in practice
+      realMetrics: realMetricsData,
       systemFingerprint: systemFingerprint,
     };
 
     // Log system fingerprint for debugging
     console.log('System Fingerprint:', systemFingerprint);
+    console.log('Real Metrics:', realMetricsData);
 
-    return NextResponse.json(result);
+    // Ensure response explicitly includes these fields
+    const response = NextResponse.json(result);
+    
+    // Explicitly log that fields are included (for debugging production issues)
+    console.log('Response includes realMetrics:', !!result.realMetrics);
+    console.log('Response includes systemFingerprint:', !!result.systemFingerprint);
+    
+    return response;
   } catch (error: any) {
     console.error('Audit error:', error);
     return NextResponse.json(
