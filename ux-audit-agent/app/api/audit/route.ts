@@ -317,6 +317,20 @@ export async function POST(request: NextRequest) {
       const windowSizeArg = '--window-size=1280,800';
       browserArgs = browserArgs.filter((arg: string) => !arg.startsWith('--window-size'));
       browserArgs.push(windowSizeArg);
+      
+      // CRITICAL: Ensure --disk-cache-size=1 is always present in production
+      // This disables disk caching entirely for consistent measurements
+      const diskCacheArg = '--disk-cache-size=1';
+      browserArgs = browserArgs.filter((arg: string) => !arg.startsWith('--disk-cache-size'));
+      browserArgs.push(diskCacheArg);
+      console.log(`[${auditConfig.environment.getCurrent()}] Applied --disk-cache-size=1 for production environment`);
+    }
+    
+    // CRITICAL: Ensure --disk-cache-size=1 is present in all environments
+    // This disables disk caching entirely for consistent measurements
+    if (!browserArgs.includes('--disk-cache-size=1')) {
+      browserArgs.push('--disk-cache-size=1');
+      console.log(`[${auditConfig.environment.getCurrent()}] Applied --disk-cache-size=1 (cache disabled)`);
     }
     
     const launchOptions: any = {
@@ -485,10 +499,157 @@ export async function POST(request: NextRequest) {
       }
     });
     
+    // CRITICAL: Clear storage cache and browser cookies before every run
+    // This ensures consistent measurements by eliminating cache/cookie effects
+    // Configuration flags: clearStorageCache=true, clearBrowserCookies=true
+    // Must be done BEFORE navigation starts
+    if (auditConfig.cacheClearing.clearBrowserCookies || auditConfig.cacheClearing.clearStorageCache) {
+      try {
+        // Navigate to a blank page first to enable storage operations
+        await page.goto('about:blank');
+        
+        // Clear browser cookies if enabled (works globally)
+        if (auditConfig.cacheClearing.clearBrowserCookies) {
+          await client.send('Network.clearBrowserCookies');
+          console.log(`[${auditConfig.environment.getCurrent()}] clearBrowserCookies=true: Cleared browser cookies before audit`);
+        }
+        
+        // Clear storage cache if enabled
+        if (auditConfig.cacheClearing.clearStorageCache) {
+          // Clear storage for the target origin using CDP (if available)
+          // This clears localStorage, sessionStorage, IndexedDB, etc.
+          try {
+            // Storage domain may need to be enabled first, but it's not always available
+            // Try to clear storage directly - will fall back to JavaScript if it fails
+            await client.send('Storage.clearDataForOrigin', {
+              origin: targetUrl.origin,
+              storageTypes: 'all',
+            } as any);
+            console.log(`[${auditConfig.environment.getCurrent()}] clearStorageCache=true: Cleared storage cache for origin: ${targetUrl.origin}`);
+          } catch (storageError) {
+            // Storage domain may not be available in all Chrome versions
+            // Fallback to JavaScript-based clearing (handled below)
+            console.warn(`⚠️ CDP Storage clearing not available, will use JavaScript fallback: ${storageError}`);
+          }
+        }
+      } catch (clearError) {
+        // Log but don't fail - clearing is best effort
+        console.warn(`⚠️ Could not clear storage/cookies via CDP: ${clearError}`);
+      }
+    }
+    
+    // CRITICAL: Ensure storage and cookies are cleared before navigation
+    // Also clear via page context as fallback (runs on every page load)
+    // This ensures storage is cleared even if CDP methods fail
+    await page.evaluateOnNewDocument(() => {
+      // Clear all storage types when page loads
+      try {
+        // Clear localStorage
+        if (window.localStorage) {
+          localStorage.clear();
+        }
+        
+        // Clear sessionStorage
+        if (window.sessionStorage) {
+          sessionStorage.clear();
+        }
+        
+        // Clear IndexedDB databases (best effort - async)
+        // Note: indexedDB.databases() may not be available in all browsers
+        if (window.indexedDB && (indexedDB as any).databases) {
+          try {
+            const dbList = (indexedDB as any).databases();
+            dbList.then((databases: any[]) => {
+              databases.forEach(db => {
+                if (db && db.name) {
+                  const deleteRequest = indexedDB.deleteDatabase(db.name);
+                  deleteRequest.onsuccess = () => {
+                    // Successfully deleted
+                  };
+                  deleteRequest.onerror = () => {
+                    // Ignore errors - best effort clearing
+                  };
+                }
+              });
+            }).catch(() => {
+              // Ignore errors - best effort clearing
+            });
+          } catch (e) {
+            // indexedDB.databases() may not be available, continue
+          }
+        }
+        
+        // Clear cache storage (Service Worker caches)
+        if (window.caches) {
+          caches.keys().then(cacheNames => {
+            cacheNames.forEach(cacheName => {
+              caches.delete(cacheName).catch(() => {
+                // Ignore errors - best effort clearing
+              });
+            });
+          }).catch(() => {
+            // Ignore errors - best effort clearing
+          });
+        }
+      } catch (e) {
+        // Storage clearing may fail in some contexts, continue
+      }
+    });
+    
+    // CRITICAL: Warm-up request before actual audit
+    // This ensures server-side cache and DNS are 'hot' and ready for the real test
+    // Applies to both production and development environments
+    if (auditConfig.warmup.enabled) {
+      try {
+        console.log(`[${auditConfig.environment.getCurrent()}] Starting warm-up request to ${targetUrl.toString()}`);
+        
+        // Make a brief warm-up visit to the URL
+        // Use 'domcontentloaded' for faster warm-up (just need DNS/cache warm, not full load)
+        await page.goto(targetUrl.toString(), {
+          waitUntil: auditConfig.warmup.waitUntil as any, // 'domcontentloaded' - faster warm-up
+          timeout: auditConfig.warmup.timeout,
+        });
+        
+        console.log(`[${auditConfig.environment.getCurrent()}] Warm-up request completed - DNS and server cache warmed`);
+        
+        // Wait for cooldown period to ensure DNS/cache are fully warmed
+        await new Promise(resolve => setTimeout(resolve, auditConfig.warmup.cooldownPeriod));
+        
+        // Navigate away from the warm-up page before actual audit
+        // This ensures we start fresh for the actual audit
+        await page.goto('about:blank');
+        
+        // Re-clear storage and cookies after warm-up to ensure clean state for audit
+        if (auditConfig.cacheClearing.clearBrowserCookies) {
+          await client.send('Network.clearBrowserCookies');
+        }
+        if (auditConfig.cacheClearing.clearStorageCache) {
+          try {
+            await client.send('Storage.clearDataForOrigin', {
+              origin: targetUrl.origin,
+              storageTypes: 'all',
+            } as any);
+          } catch (storageError) {
+            // Storage clearing may fail, continue
+          }
+        }
+        
+        console.log(`[${auditConfig.environment.getCurrent()}] Cleared storage/cookies after warm-up - ready for actual audit`);
+      } catch (warmupError) {
+        // Warm-up failure should not stop the audit - log and continue
+        console.warn(`⚠️ Warm-up request failed, continuing with audit: ${warmupError}`);
+      }
+    }
+    
     // Standardized page load conditions from configuration
+    // CRITICAL: waitUntil: 'networkidle0' ensures audit only starts when
+    // there have been no network connections for at least 500ms
+    // This is stricter than 'networkidle2' and ensures all resources are fully loaded
+    // Applies to both production and development environments
+    // Note: DNS and server cache are already warmed from warm-up request
     try {
       await page.goto(targetUrl.toString(), { 
-        waitUntil: auditConfig.pageLoad.waitUntil as any,
+        waitUntil: auditConfig.pageLoad.waitUntil as any, // 'networkidle0' - no network connections for 500ms
         timeout: auditConfig.pageLoad.timeout 
       });
       

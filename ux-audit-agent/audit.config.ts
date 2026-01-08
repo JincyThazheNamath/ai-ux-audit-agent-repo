@@ -33,6 +33,16 @@ export interface AuditConfig {
     timeout: number;
     stabilizationPeriod: number;
   };
+  warmup: {
+    enabled: boolean;
+    waitUntil: string;
+    timeout: number;
+    cooldownPeriod: number;
+  };
+  cacheClearing: {
+    clearStorageCache: boolean;
+    clearBrowserCookies: boolean;
+  };
   metrics: {
     topMetrics: string[];
     thresholds: {
@@ -132,6 +142,8 @@ export const auditConfig: AuditConfig = {
       '--no-pings',
       '--password-store=basic',
       '--use-mock-keychain',
+      // CRITICAL: Disable disk caching entirely to ensure consistent measurements
+      '--disk-cache-size=1',
     ],
   },
 
@@ -175,8 +187,12 @@ export const auditConfig: AuditConfig = {
 
   // Page Load Configuration
   pageLoad: {
-    // Wait strategy - consistent across environments
-    waitUntil: 'networkidle2',
+    // Wait strategy - CRITICAL: networkidle0 ensures audit only starts when
+    // there have been no network connections for at least 500ms
+    // This is stricter than networkidle2 (2 or fewer connections) and ensures
+    // all resources are fully loaded before audit begins
+    // Applies to both production and development environments
+    waitUntil: 'networkidle0',
     
     // Timeout in milliseconds
     timeout: 30000,
@@ -184,6 +200,37 @@ export const auditConfig: AuditConfig = {
     // Stabilization period after page load (ms)
     // This ensures metrics are collected at the same point in page lifecycle
     stabilizationPeriod: 3000,
+  },
+
+  // Warm-up Request Configuration
+  // CRITICAL: Warm-up request ensures server-side cache and DNS are 'hot' before audit
+  // This applies to both production and development environments
+  warmup: {
+    // Enable warm-up request before actual audit
+    enabled: true,
+    
+    // Warm-up wait strategy - just need to establish connection and load DOM
+    // Use 'domcontentloaded' for faster warm-up (don't wait for all resources)
+    waitUntil: 'domcontentloaded',
+    
+    // Warm-up timeout (ms) - shorter than actual audit since we just need connection
+    timeout: 10000,
+    
+    // Wait period after warm-up before starting actual audit (ms)
+    // This ensures DNS/cache are fully warmed
+    cooldownPeriod: 1000,
+  },
+
+  // Cache and Cookie Clearing Configuration
+  // CRITICAL: These must be set to true before every run for consistent measurements
+  cacheClearing: {
+    // Clear storage cache before every audit run
+    // This ensures consistent measurements by eliminating storage cache effects
+    clearStorageCache: true,
+    
+    // Clear browser cookies before every audit run
+    // This ensures consistent measurements by eliminating cookie effects
+    clearBrowserCookies: true,
   },
 
   // Performance Metrics Configuration
