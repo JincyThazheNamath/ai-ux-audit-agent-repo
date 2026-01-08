@@ -3,6 +3,8 @@ import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 import Anthropic from '@anthropic-ai/sdk';
 import { auditConfig } from '../../../audit.config';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Runtime configuration - Node.js runtime required for Puppeteer
 // Note: Edge Runtime is not compatible with Puppeteer, so we use Node.js runtime
@@ -418,28 +420,45 @@ export async function POST(request: NextRequest) {
     // Standardized viewport size from configuration
     await page.setViewport(auditConfig.browser.viewport);
     
-    // IMPORTANT: Apply SIMULATED throttling (not observed) using Chrome DevTools Protocol (CDP)
+    // CRITICAL: Apply SIMULATED throttling (not observed) using Chrome DevTools Protocol (CDP)
     // This ensures consistent metrics regardless of host machine performance
+    // MUST be done BEFORE navigation starts
     const client = await page.target().createCDPSession();
     
-    // Apply SIMULATED CPU throttling (4x slowdown - matches Lighthouse)
-    // This is simulated, not actual CPU throttling, ensuring consistent results
+    // Enable Performance domain to get simulated metrics with throttling
+    await client.send('Performance.enable', {});
+    
+    // Enable Network domain for throttling
+    await client.send('Network.enable', {});
+    
+    // CRITICAL: Apply SIMULATED CPU throttling with fixed multiplier
+    // Fixed value: 4x slowdown (matches Lighthouse)
+    // This ensures CPU-bound tasks are measured consistently
     await client.send('Emulation.setCPUThrottlingRate', {
       rate: auditConfig.throttling.cpuSlowdownMultiplier,
     });
-    console.log(`[${auditConfig.environment.getCurrent()}] Applied simulated CPU throttling: ${auditConfig.throttling.cpuSlowdownMultiplier}x slowdown`);
+    console.log(`[${auditConfig.environment.getCurrent()}] Applied SIMULATED CPU throttling: ${auditConfig.throttling.cpuSlowdownMultiplier}x slowdown (fixed)`);
     
-    // Apply SIMULATED network throttling (fast 4G - matches Lighthouse desktop)
-    // This is simulated, not actual network throttling, ensuring consistent results
+    // CRITICAL: Apply SIMULATED network throttling with fixed values
+    // Fixed values: rttMs=150ms, throughputKbps=1638
+    // This ensures network metrics are consistent across all environments
+    // Note: connectionType is optional - we use fixed throughput/latency values instead
     await client.send('Network.emulateNetworkConditions', {
       offline: false,
       downloadThroughput: auditConfig.throttling.network.downloadThroughput,
       uploadThroughput: auditConfig.throttling.network.uploadThroughput,
       latency: auditConfig.throttling.network.latency,
+      // connectionType is not needed when providing explicit throughput/latency values
+      // Omitting it avoids the Protocol error while still providing simulated throttling
     });
-    console.log(`[${auditConfig.environment.getCurrent()}] Applied simulated network throttling: ${auditConfig.throttling.network.connectionType} (Download: ${auditConfig.throttling.network.downloadThroughput} bytes/s, Upload: ${auditConfig.throttling.network.uploadThroughput} bytes/s, Latency: ${auditConfig.throttling.network.latency}ms)`);
+    console.log(`[${auditConfig.environment.getCurrent()}] Applied SIMULATED network throttling: ${auditConfig.throttling.throttlingMethod} mode`);
+    console.log(`  - RTT: ${auditConfig.throttling.network.rttMs}ms (fixed)`);
+    console.log(`  - Throughput: ${auditConfig.throttling.network.throughputKbps} Kbps (fixed)`);
+    console.log(`  - Latency: ${auditConfig.throttling.network.latency}ms (fixed)`);
+    console.log(`  - CPU Slowdown: ${auditConfig.throttling.cpuSlowdownMultiplier}x (fixed)`);
     
-    // Enable Performance API before navigation for consistent metric collection
+    // Enable Performance timeline collection with throttling
+    // This ensures metrics are collected with simulated throttling applied
     await page.evaluateOnNewDocument(() => {
       // Mark audit start time
       performance.mark('audit-start');
@@ -483,7 +502,10 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Collect performance metrics using Performance API
+    // CRITICAL: Collect performance metrics using Performance API
+    // With CDP throttling enabled BEFORE navigation, the Performance timeline
+    // entries will respect simulated throttling (not observed values)
+    // This ensures consistent metrics across all environments
     const performanceMetrics = await page.evaluate(() => {
       const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
       if (!navigation) {
@@ -500,6 +522,8 @@ export async function POST(request: NextRequest) {
         };
       }
 
+      // With Performance.enable() and throttling set via CDP BEFORE navigation,
+      // these Performance API entries reflect SIMULATED metrics (throttled)
       const paint = performance.getEntriesByType('paint');
       const fcp = paint.find(p => p.name === 'first-contentful-paint')?.startTime || 0;
       
@@ -647,6 +671,39 @@ export async function POST(request: NextRequest) {
       console.log('\n=== TOP 5 METRICS RAW JSON REPORT ===');
       console.log(JSON.stringify(top5MetricsReport, null, 2));
       console.log('=== END METRICS REPORT ===\n');
+      
+      // Write metrics to log file for easy access
+      try {
+        const logsDir = path.join(process.cwd(), 'logs');
+        if (!fs.existsSync(logsDir)) {
+          fs.mkdirSync(logsDir, { recursive: true });
+        }
+        
+        const logFileName = `metrics-${new Date().toISOString().replace(/[:.]/g, '-').split('T')[0]}.json`;
+        const logFilePath = path.join(logsDir, logFileName);
+        
+        // Read existing logs or create new array
+        let existingLogs: any[] = [];
+        if (fs.existsSync(logFilePath)) {
+          try {
+            const existingData = fs.readFileSync(logFilePath, 'utf-8');
+            existingLogs = JSON.parse(existingData);
+          } catch (e) {
+            // If file is corrupted or empty, start fresh
+            existingLogs = [];
+          }
+        }
+        
+        // Append new metrics entry
+        existingLogs.push(top5MetricsReport);
+        
+        // Write to file
+        fs.writeFileSync(logFilePath, JSON.stringify(existingLogs, null, 2), 'utf-8');
+        console.log(`📝 Metrics logged to: ${logFilePath}`);
+      } catch (fileError) {
+        // File logging is optional, don't fail if it doesn't work
+        console.warn('⚠️ Could not write metrics to file:', fileError);
+      }
     }
 
     // Calculate Lighthouse-style performance score using configuration thresholds

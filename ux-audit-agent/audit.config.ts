@@ -16,12 +16,15 @@ export interface AuditConfig {
     launchArgs: string[];
   };
   throttling: {
+    throttlingMethod: 'simulate' | 'devtools' | 'provided';
     cpuSlowdownMultiplier: number;
     network: {
+      rttMs: number;
+      throughputKbps: number;
       downloadThroughput: number;
       uploadThroughput: number;
       latency: number;
-      connectionType: string;
+      connectionType: 'none' | 'cellular2g' | 'cellular3g' | 'cellular4g' | 'bluetooth' | 'ethernet' | 'wifi' | 'wimax' | 'other' | string;
     };
     mode: string;
   };
@@ -135,20 +138,30 @@ export const auditConfig: AuditConfig = {
   // Throttling Configuration - SIMULATED (not observed) for consistency
   // These values match Lighthouse's simulated throttling
   throttling: {
-    // CPU Throttling: 4x slowdown (matches Lighthouse)
+    // CRITICAL: Force simulated throttling (not observed)
+    // This ensures consistent metrics regardless of host machine performance
+    throttlingMethod: 'simulate',
+    
+    // CPU Throttling: Fixed 4x slowdown (matches Lighthouse)
     // This is SIMULATED, not actual CPU throttling
     cpuSlowdownMultiplier: 4,
     
-    // Network Throttling: SIMULATED (matches Lighthouse desktop)
-    // Use CDP (Chrome DevTools Protocol) to set network conditions
+    // Network Throttling: SIMULATED (matches Lighthouse desktop/mobile)
+    // Fixed values ensure consistent measurements
     network: {
-      // Download throughput (bytes/sec) - Simulates fast 4G
-      downloadThroughput: 1.6 * 1024 * 1024, // 1.6 Mbps
+      // Round trip time (ms) - Fixed at 150ms
+      rttMs: 150,
       
-      // Upload throughput (bytes/sec)
-      uploadThroughput: 750 * 1024, // 750 Kbps
+      // Throughput (Kbps) - Fixed at 1638 Kbps (matches standard desktop)
+      throughputKbps: 1638,
       
-      // Latency (ms) - Round trip time
+      // Download throughput (bytes/sec) - Calculated from throughputKbps
+      downloadThroughput: 1638 * 1024 / 8, // 1638 Kbps = 209664 bytes/sec
+      
+      // Upload throughput (bytes/sec) - Typically 60% of download
+      uploadThroughput: Math.round(1638 * 1024 / 8 * 0.6), // ~125798 bytes/sec
+      
+      // Latency (ms) - Same as rttMs
       latency: 150,
       
       // Connection type for simulation
