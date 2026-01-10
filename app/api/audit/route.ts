@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 import Anthropic from '@anthropic-ai/sdk';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Validate API key on initialization
 const apiKey = process.env.ANTHROPIC_API_KEY || '';
@@ -131,7 +133,40 @@ export async function POST(request: NextRequest) {
           '--disable-gpu',
         ];
         
-        console.log('Development browser config: Using local Chrome/Chromium');
+        // First, try to use channel option (puppeteer-core will auto-detect Chrome)
+        // If that doesn't work, fall back to explicit path detection
+        if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) {
+          launchOptions.executablePath = process.env.CHROME_PATH;
+          console.log('Development browser config: Using Chrome from CHROME_PATH');
+          console.log(`Chrome executable: ${process.env.CHROME_PATH}`);
+        } else {
+          // Try common Chrome installation paths on Windows
+          const chromePaths = [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe') : null,
+            process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application', 'chrome.exe') : null,
+            process.env['PROGRAMFILES(X86)'] ? path.join(process.env['PROGRAMFILES(X86)'], 'Google', 'Chrome', 'Application', 'chrome.exe') : null,
+          ].filter(Boolean) as string[];
+
+          let foundPath: string | null = null;
+          for (const chromePath of chromePaths) {
+            if (chromePath && fs.existsSync(chromePath)) {
+              foundPath = chromePath;
+              break;
+            }
+          }
+          
+          if (foundPath) {
+            launchOptions.executablePath = foundPath;
+            console.log('Development browser config: Using local Chrome/Chromium');
+            console.log(`Chrome executable: ${foundPath}`);
+          } else {
+            // Use channel option - puppeteer-core will try to find Chrome automatically
+            launchOptions.channel = 'chrome';
+            console.log('Development browser config: Using Chrome channel (auto-detect)');
+          }
+        }
       }
 
       console.log('Launching browser...');
@@ -404,24 +439,63 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
       ];
     }
 
-    // Calculate summary
+    // Calculate summary with improved scoring algorithm aligned with Lighthouse
+    const criticalCount = findings.filter(f => f.severity === 'critical').length;
+    const highCount = findings.filter(f => f.severity === 'high').length;
+    const mediumCount = findings.filter(f => f.severity === 'medium').length;
+    const lowCount = findings.filter(f => f.severity === 'low').length;
+    
+    // Improved scoring aligned with Lighthouse methodology
+    // Lighthouse philosophy: Sites can score well (80-100) even with some issues
+    // Only severe issues should significantly impact the score
+    // This matches Lighthouse's approach where Performance 98, Accessibility 85, etc. = high overall score
+    const calculateOverallScore = () => {
+      // Start with a very high base score (Lighthouse-style)
+      // Well-built sites should score 90-100 even with some issues
+      let score = 92;
+      
+      // Critical issues have moderate impact (not too harsh)
+      // Each critical issue reduces score, but sites can still score well
+      score -= Math.min(criticalCount * 5, 20); // Max 20 points for critical
+      
+      // High issues have very small impact
+      // Sites can have many high issues and still score 85+
+      score -= Math.min(highCount * 1.0, 10); // Max 10 points for high
+      
+      // Medium issues have minimal impact
+      // These are very common and shouldn't penalize good sites
+      score -= Math.min(mediumCount * 0.25, 6); // Max 6 points for medium
+      
+      // Low issues have almost no impact
+      score -= Math.min(lowCount * 0.05, 1); // Max 1 point for low
+      
+      // Bonus system: Reward sites with good practices
+      // If there are no critical issues, add significant bonus
+      if (criticalCount === 0) {
+        score += 5; // Bonus for no critical issues
+      }
+      
+      // Additional bonus if high issues are minimal
+      if (criticalCount === 0 && highCount <= 4) {
+        score += Math.min(3, (5 - highCount) * 0.6); // Extra bonus for few high issues
+      }
+      
+      // Ensure score stays within 0-100 range
+      return Math.max(0, Math.min(100, Math.round(score)));
+    };
+    
     const summary = {
       totalIssues: findings.length,
-      critical: findings.filter(f => f.severity === 'critical').length,
-      high: findings.filter(f => f.severity === 'high').length,
-      medium: findings.filter(f => f.severity === 'medium').length,
-      low: findings.filter(f => f.severity === 'low').length,
+      critical: criticalCount,
+      high: highCount,
+      medium: mediumCount,
+      low: lowCount,
       accessibility: findings.filter(f => f.category === 'accessibility').length,
       usability: findings.filter(f => f.category === 'usability').length,
       design: findings.filter(f => f.category === 'design').length,
       performance: findings.filter(f => f.category === 'performance').length,
       seo: findings.filter(f => f.category === 'seo').length,
-      overallScore: Math.max(0, 100 - (
-        findings.filter(f => f.severity === 'critical').length * 15 +
-        findings.filter(f => f.severity === 'high').length * 10 +
-        findings.filter(f => f.severity === 'medium').length * 5 +
-        findings.filter(f => f.severity === 'low').length * 2
-      )),
+      overallScore: calculateOverallScore(),
     };
 
     const result: AuditResult = {
