@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Share2, Download, X, ZoomIn, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { Share2, Download, X, ZoomIn, Eye, EyeOff, AlertCircle, TrendingUp, Target } from 'lucide-react';
 import { AuditResult, AuditFinding } from '../types/audit';
+import { useViewMode } from '../contexts/ViewModeContext';
+import { transformSummaryForBusiness } from '../lib/viewAdapters';
 
 interface SummaryCardProps {
   result: AuditResult;
@@ -22,6 +24,7 @@ const getScoreColor = (score: number) => {
  * Includes share and download functionality for the audit report.
  */
 export default function SummaryCard({ result, onShare, onDownload }: SummaryCardProps) {
+  const { mode } = useViewMode();
   const [isHovered, setIsHovered] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
@@ -29,6 +32,9 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
   const [hoveredOverlay, setHoveredOverlay] = useState<number | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
+
+  // Get business view data if in business mode
+  const businessView = mode === 'business' ? transformSummaryForBusiness(result) : null;
 
   // Handle ESC key to close modal
   useEffect(() => {
@@ -250,12 +256,53 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
           )}
         </div>
 
+        {/* Executive Summary for Business Mode */}
+        {mode === 'business' && businessView && (
+          <div className="mb-6 p-6 bg-gradient-to-br from-teal-900/20 to-blue-900/20 rounded-xl border border-teal-500/30">
+            <div className="flex items-start gap-3 mb-4">
+              <TrendingUp className="text-teal-400 mt-1" size={24} />
+              <div className="flex-1">
+                <h3 className="text-xl font-bold text-white mb-2">Executive Summary</h3>
+                <p className="text-gray-300 leading-relaxed mb-4">{businessView.executiveSummary}</p>
+                
+                <div className="bg-[#0a1628]/50 rounded-lg p-4 mb-4 border border-gray-700/50">
+                  <div className="flex items-start gap-2 mb-2">
+                    <Target className="text-orange-400 mt-0.5" size={18} />
+                    <div className="flex-1">
+                      <h4 className="text-sm font-semibold text-orange-300 mb-2">Risk Assessment</h4>
+                      <p className="text-sm text-gray-300">{businessView.riskAssessment}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {businessView.topPriorities.length > 0 && (
+                  <div className="bg-[#0a1628]/50 rounded-lg p-4 border border-gray-700/50">
+                    <h4 className="text-sm font-semibold text-teal-300 mb-3">Top Priorities</h4>
+                    <ul className="space-y-2">
+                      {businessView.topPriorities.map((priority, idx) => (
+                        <li key={idx} className="text-sm text-gray-300 flex items-start gap-2">
+                          <span className="text-teal-400 mt-0.5">•</span>
+                          <span>{priority}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Overall Score */}
         <div className="mb-6 p-6 bg-[#0a1628] rounded-xl border border-gray-700/50">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-gray-300 mb-1">Overall UX Score</h3>
-            <p className="text-sm text-gray-400">Based on severity-weighted analysis</p>
+            <h3 className="text-lg font-semibold text-gray-300 mb-1">
+              {mode === 'business' ? 'Overall UX Score' : 'Overall UX Score'}
+            </h3>
+            <p className="text-sm text-gray-400">
+              {mode === 'business' ? 'Based on severity-weighted analysis' : 'Based on severity-weighted analysis'}
+            </p>
           </div>
           <div className={`text-5xl font-bold ${getScoreColor(result.summary.overallScore)}`}>
             {result.summary.overallScore}

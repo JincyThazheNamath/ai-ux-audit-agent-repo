@@ -5,13 +5,16 @@ import { Search, Loader2, AlertCircle } from 'lucide-react';
 import { generateSampleComMockData, generateDefaultMockData, generateMockResult } from '../lib/mockData';
 import { AuditResult } from '../types/audit';
 import { downloadReportAsHTML, openReportForPrint } from '../components/ReportGenerator';
+import { ViewModeProvider, useViewMode } from '../contexts/ViewModeContext';
+import ViewModeSwitcher from '../components/ViewModeSwitcher';
 
 // Lazy load heavy components to reduce initial bundle size
 const AuditFindingCard = lazy(() => import('../components/AuditFindingCard'));
 const SummaryCard = lazy(() => import('../components/SummaryCard'));
 const FilterDropdown = lazy(() => import('../components/FilterDropdown'));
 
-export default function Home() {
+function HomeContent() {
+  const { mode } = useViewMode();
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AuditResult | null>(null);
@@ -138,28 +141,31 @@ Report ID: ${result.timestamp}
 
   const downloadReport = () => {
     if (!result) return;
-    downloadReportAsHTML(result);
+    downloadReportAsHTML(result, mode);
   };
 
   const shareReport = async () => {
     if (!result) return;
     // Open report in new window for printing/PDF
-    openReportForPrint(result);
+    openReportForPrint(result, mode);
   };
 
   return (
     <div className="min-h-screen bg-[#0a1628]">
-      <div className="container mx-auto px-4 py-8 max-w-7xl">
-        {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-5xl font-bold text-white mb-4">
-            AI UX Audit Agent
-          </h1>
-          <p className="text-xl text-gray-300 max-w-2xl mx-auto">
-            Automated UX analysis powered by AI. Get instant insights on accessibility, 
-            usability, design consistency, and more.
-          </p>
-        </div>
+        <div className="container mx-auto px-4 py-8 max-w-7xl">
+          {/* Header */}
+          <div className="text-center mb-12">
+            <h1 className="text-5xl font-bold text-white mb-4">
+              AI UX Audit Agent
+            </h1>
+            <div className="flex items-center justify-center gap-4 mb-4">
+              <ViewModeSwitcher />
+            </div>
+            <p className="text-xl text-gray-300 max-w-2xl mx-auto">
+              Automated UX analysis powered by AI. Get instant insights on accessibility, 
+              usability, design consistency, and more.
+            </p>
+          </div>
 
         {/* Input Section */}
         <div className="bg-[#1a2332] rounded-2xl shadow-xl p-8 mb-8 border border-gray-700/50">
@@ -261,11 +267,19 @@ Report ID: ${result.timestamp}
           </div>
         )}
 
-        {/* Footer */}
-        <div className="text-center mt-12 text-gray-400">
-          <p>Powered by AI • Built for Lunim Studio</p>
+          {/* Footer */}
+          <div className="text-center mt-12 text-gray-400">
+            <p>Powered by AI • Built for Lunim Studio</p>
+          </div>
         </div>
       </div>
-    </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <ViewModeProvider>
+      <HomeContent />
+    </ViewModeProvider>
   );
 }
