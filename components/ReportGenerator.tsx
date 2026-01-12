@@ -65,7 +65,7 @@ export function generateFormattedReport(result: AuditResult, mode: ViewMode = 'p
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>UX Audit Report - ${result.url}</title>
+  <title>${isBusinessMode ? 'Web Quality Audit Report' : 'UX Audit Report'} - ${result.url}</title>
   <style>
     * {
       margin: 0;
@@ -404,7 +404,7 @@ export function generateFormattedReport(result: AuditResult, mode: ViewMode = 'p
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <h1>UX Audit Report</h1>
+      <h1>${isBusinessMode ? 'Web Quality Audit Report' : 'UX Audit Report'}</h1>
       <div class="header-meta">
         <div><strong>Website:</strong> ${result.url}</div>
         <div><strong>Audit Date:</strong> ${formatDate(result.timestamp)}</div>

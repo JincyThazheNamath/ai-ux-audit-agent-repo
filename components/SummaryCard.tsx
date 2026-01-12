@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Share2, Download, X, ZoomIn, Eye, EyeOff, AlertCircle, TrendingUp, Target } from 'lucide-react';
+import { Share2, Download, X, ZoomIn, Eye, EyeOff, AlertCircle, TrendingUp, Target, Award, BarChart3 } from 'lucide-react';
 import { AuditResult, AuditFinding } from '../types/audit';
 import { useViewMode } from '../contexts/ViewModeContext';
 import { transformSummaryForBusiness } from '../lib/viewAdapters';
@@ -256,40 +256,126 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
           )}
         </div>
 
-        {/* Executive Summary for Business Mode */}
+        {/* Enhanced Executive Summary for Client Mode */}
         {mode === 'business' && businessView && (
-          <div className="mb-6 p-6 bg-gradient-to-br from-teal-900/20 to-blue-900/20 rounded-xl border border-teal-500/30">
-            <div className="flex items-start gap-3 mb-4">
-              <TrendingUp className="text-teal-400 mt-1" size={24} />
-              <div className="flex-1">
-                <h3 className="text-xl font-bold text-white mb-2">Executive Summary</h3>
-                <p className="text-gray-300 leading-relaxed mb-4">{businessView.executiveSummary}</p>
-                
-                <div className="bg-[#0a1628]/50 rounded-lg p-4 mb-4 border border-gray-700/50">
-                  <div className="flex items-start gap-2 mb-2">
-                    <Target className="text-orange-400 mt-0.5" size={18} />
-                    <div className="flex-1">
-                      <h4 className="text-sm font-semibold text-orange-300 mb-2">Risk Assessment</h4>
-                      <p className="text-sm text-gray-300">{businessView.riskAssessment}</p>
-                    </div>
-                  </div>
+          <div className="mb-6 space-y-4">
+            {/* Main Executive Summary Card */}
+            <div className="bg-gradient-to-br from-teal-900/20 to-blue-900/20 rounded-xl border border-teal-500/30 p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <TrendingUp className="text-teal-400 mt-1" size={24} />
+                <div className="flex-1">
+                  <h3 className="text-xl font-bold text-white mb-2">Executive Summary</h3>
+                  <p className="text-gray-300 leading-relaxed mb-4">{businessView.executiveSummary}</p>
                 </div>
-
-                {businessView.topPriorities.length > 0 && (
-                  <div className="bg-[#0a1628]/50 rounded-lg p-4 border border-gray-700/50">
-                    <h4 className="text-sm font-semibold text-teal-300 mb-3">Top Priorities</h4>
-                    <ul className="space-y-2">
-                      {businessView.topPriorities.map((priority, idx) => (
-                        <li key={idx} className="text-sm text-gray-300 flex items-start gap-2">
-                          <span className="text-teal-400 mt-0.5">•</span>
-                          <span>{priority}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </div>
             </div>
+
+            {/* Industry Benchmark Comparison */}
+            {businessView.industryBenchmark && (
+              <div className="bg-[#0a1628] rounded-xl border border-gray-700/50 p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <BarChart3 className="text-blue-400" size={20} />
+                  <h4 className="text-lg font-semibold text-white">Industry Benchmark Comparison</h4>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-teal-900/20 rounded-lg p-4 border border-teal-500/30">
+                    <div className="text-2xl font-bold text-teal-300 mb-1">
+                      Top {businessView.industryBenchmark.percentile}%
+                    </div>
+                    <div className="text-sm text-gray-400">Industry Positioning</div>
+                  </div>
+                  <div className="bg-blue-900/20 rounded-lg p-4 border border-blue-500/30">
+                    <div className="text-2xl font-bold text-blue-300 mb-1 capitalize">
+                      {businessView.industryBenchmark.positioning}
+                    </div>
+                    <div className="text-sm text-gray-400">Performance Level</div>
+                  </div>
+                  <div className="bg-purple-900/20 rounded-lg p-4 border border-purple-500/30">
+                    <div className="text-2xl font-bold text-purple-300 mb-1">
+                      {result.summary.overallScore}/100
+                    </div>
+                    <div className="text-sm text-gray-400">Quality Score</div>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-300 mt-4 italic">
+                  {businessView.industryBenchmark.comparison}
+                </p>
+              </div>
+            )}
+
+            {/* Value Proposition */}
+            {businessView.valueProposition && businessView.valueProposition.length > 0 && (
+              <div className="bg-[#0a1628]/50 rounded-lg p-4 border border-gray-700/50">
+                <div className="flex items-center gap-2 mb-3">
+                  <Award className="text-yellow-400" size={18} />
+                  <h4 className="text-sm font-semibold text-yellow-300">Analysis Credibility</h4>
+                </div>
+                <ul className="space-y-2">
+                  {businessView.valueProposition.map((prop, idx) => (
+                    <li key={idx} className="text-sm text-gray-300 flex items-start gap-2">
+                      <span className="text-teal-400 mt-0.5">✓</span>
+                      <span>{prop}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Business Impact Assessment */}
+            {businessView.businessImpact && (
+              <div className="bg-[#0a1628]/50 rounded-lg p-4 border border-gray-700/50">
+                <div className="flex items-start gap-2 mb-2">
+                  <Target className="text-orange-400 mt-0.5" size={18} />
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-orange-300 mb-2">Business Impact Assessment</h4>
+                    <p className="text-sm text-gray-300">{businessView.businessImpact}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Prioritized Action Plan */}
+            {businessView.prioritizedActionPlan && businessView.prioritizedActionPlan.length > 0 && (
+              <div className="bg-[#0a1628]/50 rounded-lg p-4 border border-gray-700/50">
+                <h4 className="text-sm font-semibold text-teal-300 mb-3">Prioritized Action Plan</h4>
+                <div className="space-y-3">
+                  {businessView.prioritizedActionPlan.map((plan, idx) => (
+                    <div key={idx} className="border-l-4 border-teal-500 pl-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-semibold text-teal-400">{plan.phase}</span>
+                        <span className="text-xs text-gray-500">•</span>
+                        <span className="text-xs text-gray-400">{plan.timeline}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${
+                          plan.priority === 'Critical' ? 'bg-red-900/30 text-red-300' :
+                          plan.priority === 'High' ? 'bg-orange-900/30 text-orange-300' :
+                          plan.priority === 'Medium' ? 'bg-yellow-900/30 text-yellow-300' :
+                          'bg-teal-900/30 text-teal-300'
+                        }`}>
+                          {plan.priority}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-300">{plan.businessValue}</p>
+                      <p className="text-xs text-gray-400 mt-1">{plan.issues} {plan.issues === 1 ? 'priority area' : 'priority areas'}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Top Priorities */}
+            {businessView.topPriorities && businessView.topPriorities.length > 0 && (
+              <div className="bg-[#0a1628]/50 rounded-lg p-4 border border-gray-700/50">
+                <h4 className="text-sm font-semibold text-teal-300 mb-3">Top Priorities</h4>
+                <ul className="space-y-2">
+                  {businessView.topPriorities.map((priority, idx) => (
+                    <li key={idx} className="text-sm text-gray-300 flex items-start gap-2">
+                      <span className="text-teal-400 mt-0.5">•</span>
+                      <span>{priority}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 
@@ -298,10 +384,12 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-300 mb-1">
-              {mode === 'business' ? 'Overall UX Score' : 'Overall UX Score'}
+              {mode === 'business' ? 'Web Quality Score' : 'Overall UX Score'}
             </h3>
             <p className="text-sm text-gray-400">
-              {mode === 'business' ? 'Based on severity-weighted analysis' : 'Based on severity-weighted analysis'}
+              {mode === 'business' 
+                ? 'Evaluated against industry-standard web quality benchmarks'
+                : 'Based on severity-weighted analysis'}
             </p>
           </div>
           <div className={`text-5xl font-bold ${getScoreColor(result.summary.overallScore)}`}>
