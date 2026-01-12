@@ -1,11 +1,17 @@
 'use client';
 
 import { AuditResult } from '../types/audit';
+import { ViewMode } from '../contexts/ViewModeContext';
+import { transformSummaryForBusiness, transformFindingForBusiness } from '../lib/viewAdapters';
 
 /**
  * Generates a professionally formatted audit report
+ * @param result - The audit result data
+ * @param mode - The view mode ('professional' or 'business')
  */
-export function generateFormattedReport(result: AuditResult): string {
+export function generateFormattedReport(result: AuditResult, mode: ViewMode = 'professional'): string {
+  const isBusinessMode = mode === 'business';
+  const businessSummary = isBusinessMode ? transformSummaryForBusiness(result) : null;
   const getSeverityEmoji = (severity: string) => {
     switch (severity) {
       case 'critical': return '🔴';
@@ -410,29 +416,47 @@ export function generateFormattedReport(result: AuditResult): string {
     <div class="section">
       <h2 class="section-title">1. Executive Summary</h2>
       <div class="executive-summary">
-        <h3>Key Findings</h3>
-        <ul>
-          <li><strong>Total Issues Identified:</strong> ${result.summary.totalIssues} across 5 categories</li>
-          <li><strong>Critical Issues:</strong> ${result.summary.critical} requiring immediate attention</li>
-          <li><strong>High Priority Issues:</strong> ${result.summary.high} affecting user experience</li>
-          <li><strong>Overall UX Score:</strong> <strong>${result.summary.overallScore}/100</strong></li>
-        </ul>
-        
-        <h3 style="margin-top: 25px;">Risk Assessment</h3>
-        <ul>
-          ${result.summary.critical > 0 ? `<li><strong>🔴 High Risk:</strong> ${result.summary.critical} critical issues pose significant accessibility and usability barriers</li>` : ''}
-          ${result.summary.high > 0 ? `<li><strong>🟠 Medium-High Risk:</strong> ${result.summary.high} high-priority issues impact user experience and conversion</li>` : ''}
-          ${result.summary.medium > 0 ? `<li><strong>🟡 Medium Risk:</strong> ${result.summary.medium} medium-priority issues should be addressed in next iteration</li>` : ''}
-          ${result.summary.low > 0 ? `<li><strong>🟢 Low Risk:</strong> ${result.summary.low} low-priority issues are minor improvements</li>` : ''}
-        </ul>
-        
-        <h3 style="margin-top: 25px;">Top Recommendations</h3>
-        <ul>
-          ${criticalFindings.length > 0 ? `<li>Address ${criticalFindings.length} critical ${criticalFindings.length === 1 ? 'issue' : 'issues'} immediately to ensure accessibility compliance</li>` : ''}
-          ${highFindings.length > 0 ? `<li>Prioritize ${highFindings.length} high-priority ${highFindings.length === 1 ? 'issue' : 'issues'} affecting user experience</li>` : ''}
-          <li>Implement systematic fixes across all ${result.summary.totalIssues} identified issues</li>
-          <li>Establish ongoing monitoring and testing protocols</li>
-        </ul>
+        ${isBusinessMode && businessSummary ? `
+          <h3>Overview</h3>
+          <p style="line-height: 1.8; margin-bottom: 20px;">${businessSummary.executiveSummary}</p>
+          
+          <h3 style="margin-top: 25px;">Risk Assessment</h3>
+          <p style="line-height: 1.8; margin-bottom: 20px;">${businessSummary.riskAssessment}</p>
+          
+          ${businessSummary.topPriorities.length > 0 ? `
+            <h3 style="margin-top: 25px;">Top Priorities</h3>
+            <ul>
+              ${businessSummary.topPriorities.map(priority => `<li>${priority}</li>`).join('')}
+            </ul>
+          ` : ''}
+          
+          <h3 style="margin-top: 25px;">Recommended Timeline</h3>
+          <p style="line-height: 1.8;">${businessSummary.recommendedTimeline}</p>
+        ` : `
+          <h3>Key Findings</h3>
+          <ul>
+            <li><strong>Total Issues Identified:</strong> ${result.summary.totalIssues} across 5 categories</li>
+            <li><strong>Critical Issues:</strong> ${result.summary.critical} requiring immediate attention</li>
+            <li><strong>High Priority Issues:</strong> ${result.summary.high} affecting user experience</li>
+            <li><strong>Overall UX Score:</strong> <strong>${result.summary.overallScore}/100</strong></li>
+          </ul>
+          
+          <h3 style="margin-top: 25px;">Risk Assessment</h3>
+          <ul>
+            ${result.summary.critical > 0 ? `<li><strong>🔴 High Risk:</strong> ${result.summary.critical} critical issues pose significant accessibility and usability barriers</li>` : ''}
+            ${result.summary.high > 0 ? `<li><strong>🟠 Medium-High Risk:</strong> ${result.summary.high} high-priority issues impact user experience and conversion</li>` : ''}
+            ${result.summary.medium > 0 ? `<li><strong>🟡 Medium Risk:</strong> ${result.summary.medium} medium-priority issues should be addressed in next iteration</li>` : ''}
+            ${result.summary.low > 0 ? `<li><strong>🟢 Low Risk:</strong> ${result.summary.low} low-priority issues are minor improvements</li>` : ''}
+          </ul>
+          
+          <h3 style="margin-top: 25px;">Top Recommendations</h3>
+          <ul>
+            ${criticalFindings.length > 0 ? `<li>Address ${criticalFindings.length} critical ${criticalFindings.length === 1 ? 'issue' : 'issues'} immediately to ensure accessibility compliance</li>` : ''}
+            ${highFindings.length > 0 ? `<li>Prioritize ${highFindings.length} high-priority ${highFindings.length === 1 ? 'issue' : 'issues'} affecting user experience</li>` : ''}
+            <li>Implement systematic fixes across all ${result.summary.totalIssues} identified issues</li>
+            <li>Establish ongoing monitoring and testing protocols</li>
+          </ul>
+        `}
       </div>
     </div>
 
@@ -536,7 +560,9 @@ export function generateFormattedReport(result: AuditResult): string {
     <!-- 4. Detailed Findings -->
     <div class="section">
       <h2 class="section-title">4. Detailed Findings</h2>
-      ${result.findings.map((finding, index) => `
+      ${result.findings.map((finding, index) => {
+        const businessFinding = isBusinessMode ? transformFindingForBusiness(finding) : null;
+        return `
         <div class="finding-card" style="border-left-color: ${getSeverityColor(finding.severity)};">
           <div class="finding-header">
             <span style="font-size: 24px;">${getSeverityEmoji(finding.severity)}</span>
@@ -551,32 +577,53 @@ export function generateFormattedReport(result: AuditResult): string {
           
           <div class="finding-section">
             <div class="finding-section-title">Description</div>
-            <div class="finding-section-content">${finding.description}</div>
+            <div class="finding-section-content">${isBusinessMode && businessFinding ? businessFinding.description : finding.description}</div>
           </div>
           
-          <div class="finding-section">
-            <div class="finding-section-title">Impact</div>
-            <div class="finding-section-content">
-              ${finding.severity === 'critical' ? '🔴 <strong>Critical Impact:</strong> This issue significantly impacts accessibility compliance, user experience, or functionality. Immediate action required.' : ''}
-              ${finding.severity === 'high' ? '🟠 <strong>High Impact:</strong> This issue affects user experience and may impact conversion rates or user satisfaction.' : ''}
-              ${finding.severity === 'medium' ? '🟡 <strong>Medium Impact:</strong> This issue should be addressed to improve overall user experience and best practices.' : ''}
-              ${finding.severity === 'low' ? '🟢 <strong>Low Impact:</strong> This is a minor improvement that enhances polish and best practices.' : ''}
+          ${isBusinessMode && businessFinding ? `
+            <div class="finding-section">
+              <div class="finding-section-title">Business Impact</div>
+              <div class="finding-section-content">
+                <p><strong>User Impact:</strong> ${businessFinding.businessImpact.userImpact}</p>
+                <p><strong>Conversion Impact:</strong> <span style="color: ${businessFinding.businessImpact.conversionImpact === 'High' ? '#dc2626' : businessFinding.businessImpact.conversionImpact === 'Medium' ? '#ea580c' : '#ca8a04'}">${businessFinding.businessImpact.conversionImpact}</span></p>
+                <p><strong>Compliance Risk:</strong> <span style="color: ${businessFinding.businessImpact.complianceRisk === 'Critical' ? '#dc2626' : businessFinding.businessImpact.complianceRisk === 'High' ? '#ea580c' : businessFinding.businessImpact.complianceRisk === 'Medium' ? '#ca8a04' : '#16a34a'}">${businessFinding.businessImpact.complianceRisk}</span></p>
+                <p><strong>Priority Score:</strong> ${businessFinding.businessImpact.priorityScore}/10</p>
+              </div>
             </div>
-          </div>
+          ` : `
+            <div class="finding-section">
+              <div class="finding-section-title">Impact</div>
+              <div class="finding-section-content">
+                ${finding.severity === 'critical' ? '🔴 <strong>Critical Impact:</strong> This issue significantly impacts accessibility compliance, user experience, or functionality. Immediate action required.' : ''}
+                ${finding.severity === 'high' ? '🟠 <strong>High Impact:</strong> This issue affects user experience and may impact conversion rates or user satisfaction.' : ''}
+                ${finding.severity === 'medium' ? '🟡 <strong>Medium Impact:</strong> This issue should be addressed to improve overall user experience and best practices.' : ''}
+                ${finding.severity === 'low' ? '🟢 <strong>Low Impact:</strong> This is a minor improvement that enhances polish and best practices.' : ''}
+              </div>
+            </div>
+          `}
           
           <div class="finding-section">
-            <div class="finding-section-title">Recommendation</div>
-            <div class="finding-section-content">${finding.suggestion}</div>
+            <div class="finding-section-title">${isBusinessMode ? 'Recommendation' : 'Recommendation'}</div>
+            <div class="finding-section-content">${isBusinessMode && businessFinding ? businessFinding.actionableRecommendation : finding.suggestion}</div>
           </div>
           
-          ${finding.codeSnippet ? `
+          ${finding.codeSnippet && !isBusinessMode ? `
             <div class="finding-section">
               <div class="finding-section-title">Code Example</div>
               <div class="code-snippet">${finding.codeSnippet.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
             </div>
           ` : ''}
+          ${finding.codeSnippet && isBusinessMode ? `
+            <div class="finding-section">
+              <div class="finding-section-title">Technical Details</div>
+              <div class="finding-section-content" style="color: #6b7280; font-style: italic;">
+                Technical implementation details and code examples are available in the Professional view report.
+              </div>
+            </div>
+          ` : ''}
         </div>
-      `).join('')}
+      `;
+      }).join('')}
     </div>
 
     <!-- 5. Conclusion -->
@@ -631,14 +678,17 @@ export function generateFormattedReport(result: AuditResult): string {
 
 /**
  * Downloads the report as HTML file
+ * @param result - The audit result data
+ * @param mode - The view mode ('professional' or 'business')
  */
-export function downloadReportAsHTML(result: AuditResult) {
-  const htmlReport = generateFormattedReport(result);
+export function downloadReportAsHTML(result: AuditResult, mode: ViewMode = 'professional') {
+  const htmlReport = generateFormattedReport(result, mode);
   const blob = new Blob([htmlReport], { type: 'text/html' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
+  const modeSuffix = mode === 'business' ? '-business' : '-professional';
   a.href = url;
-  a.download = `ux-audit-report-${result.url.replace(/https?:\/\//, '').replace(/\//g, '-')}-${Date.now()}.html`;
+  a.download = `ux-audit-report${modeSuffix}-${result.url.replace(/https?:\/\//, '').replace(/\//g, '-')}-${Date.now()}.html`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -647,9 +697,11 @@ export function downloadReportAsHTML(result: AuditResult) {
 
 /**
  * Opens report in new window for printing/PDF
+ * @param result - The audit result data
+ * @param mode - The view mode ('professional' or 'business')
  */
-export function openReportForPrint(result: AuditResult) {
-  const htmlReport = generateFormattedReport(result);
+export function openReportForPrint(result: AuditResult, mode: ViewMode = 'professional') {
+  const htmlReport = generateFormattedReport(result, mode);
   const printWindow = window.open('', '_blank');
   if (printWindow) {
     printWindow.document.write(htmlReport);
