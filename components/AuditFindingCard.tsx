@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronDown, ChevronUp, Info, TrendingUp, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Info, TrendingUp, AlertTriangle, Award } from 'lucide-react';
 import { AuditFinding } from '../types/audit';
 import { useViewMode } from '../contexts/ViewModeContext';
 import { transformFindingForBusiness } from '../lib/viewAdapters';
@@ -149,6 +149,36 @@ export default function AuditFindingCard({
                     <div>
                       <span className="text-gray-400">Priority Score:</span>
                       <span className="text-white ml-2 font-medium">{businessView.businessImpact.priorityScore}/10</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Business Value Statement for Client Mode */}
+          {mode === 'business' && businessView && businessView.businessValue && (
+            <div className="bg-gradient-to-r from-blue-900/20 to-purple-900/20 border-l-4 border-blue-500 p-4 rounded-r-lg">
+              <div className="flex items-start gap-2 mb-3">
+                <Award className="text-blue-400 mt-0.5" size={18} />
+                <div className="flex-1">
+                  <p className="font-semibold text-blue-300 mb-2">Business Value Opportunity</p>
+                  <div className="space-y-2 text-sm">
+                    <div>
+                      <span className="text-gray-400">Conversion Impact:</span>
+                      <span className="text-white ml-2">{businessView.businessValue.conversionImpact}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">User Engagement:</span>
+                      <span className="text-white ml-2">{businessView.businessValue.userEngagementImpact}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Competitive Advantage:</span>
+                      <span className="text-white ml-2">{businessView.businessValue.competitiveAdvantage}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">ROI Potential:</span>
+                      <span className="text-white ml-2">{businessView.businessValue.roiPotential}</span>
                     </div>
                   </div>
                 </div>
