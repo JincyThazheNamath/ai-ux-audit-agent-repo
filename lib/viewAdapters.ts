@@ -55,6 +55,15 @@ export function sanitizeClientLanguage(text: string): string {
     { pattern: /weighting logic/gi, replacement: 'evaluation framework' },
     { pattern: /severity math/gi, replacement: 'priority assessment' },
     { pattern: /google lighthouse/gi, replacement: 'industry-standard' },
+    { pattern: /calculated using/gi, replacement: 'based on' },
+    { pattern: /weighted formula/gi, replacement: 'evaluation framework' },
+    { pattern: /scoring algorithm/gi, replacement: 'evaluation method' },
+    { pattern: /internal system/gi, replacement: 'analysis system' },
+    { pattern: /\bheuristic\b/gi, replacement: 'evaluation criteria' },
+    { pattern: /\buncertainty\b/gi, replacement: 'assessment' },
+    { pattern: /\blimitations\b/gi, replacement: 'considerations' },
+    { pattern: /inference constraints/gi, replacement: 'evaluation parameters' },
+    { pattern: /inspection constraints/gi, replacement: 'evaluation parameters' },
   ];
   
   forbiddenPatterns.forEach(({ pattern, replacement }) => {
@@ -69,12 +78,33 @@ export function sanitizeClientLanguage(text: string): string {
     'detected': 'identified',
     'scanned': 'evaluated',
     'inspected': 'reviewed',
+    'may': 'will',
+    'might': 'will',
+    'possibly': '',
+    'uncertain': 'assessed',
+    'limitation': 'consideration',
   };
   
   Object.entries(technicalReplacements).forEach(([tech, client]) => {
     const regex = new RegExp(`\\b${tech}\\b`, 'gi');
     sanitized = sanitized.replace(regex, client);
   });
+  
+  // Remove uncertainty language (confident presentation)
+  const uncertaintyPatterns = [
+    /\bmay\b/gi,
+    /\bmight\b/gi,
+    /\bpossibly\b/gi,
+    /\bperhaps\b/gi,
+    /\buncertain\b/gi,
+  ];
+  
+  uncertaintyPatterns.forEach(pattern => {
+    sanitized = sanitized.replace(pattern, '');
+  });
+  
+  // Clean up double spaces and punctuation issues
+  sanitized = sanitized.replace(/\s+/g, ' ').replace(/\s+([.,;:])/g, '$1').trim();
   
   return sanitized;
 }
@@ -291,10 +321,10 @@ export function transformSummaryForClient(result: AuditResult): {
     });
   }
   
-  // Value proposition statements
+  // Value proposition statements (confident, no uncertainty)
   const valueProposition: string[] = [
-    `This analysis uses industry-standard web quality metrics and best-practice evaluation frameworks.`,
-    `Results are benchmarked against established industry standards and competitive positioning.`,
+    `This analysis uses industry-standard web quality metrics aligned with established benchmarks.`,
+    `Results are benchmarked against industry standards and competitive positioning data.`,
     `Recommendations align with proven strategies that drive user engagement and business growth.`,
     `Addressing these priorities will position your website ahead of ${100 - benchmark.percentile}% of industry standards.`,
   ];
@@ -306,12 +336,12 @@ export function transformSummaryForClient(result: AuditResult): {
     ? `Your website performs above industry average with clear paths to competitive advantage.`
     : `Your website has significant opportunities to exceed industry standards and gain competitive advantage.`;
   
-  // Confidence builders
+  // Confidence builders (assertive, no uncertainty)
   const confidenceBuilders: string[] = [
-    'Analysis conducted using industry-standard evaluation frameworks',
-    'Results benchmarked against established web quality metrics',
-    'Recommendations aligned with best-practice standards',
-    'Evaluation criteria follow industry-leading methodologies',
+    'Analysis based on industry-standard web quality evaluation frameworks',
+    'Results benchmarked against established industry benchmarks and best practices',
+    'Recommendations aligned with proven strategies that drive business results',
+    'Evaluation follows established industry standards for web quality assessment',
   ];
   
   return {
@@ -449,11 +479,14 @@ function getPriorityScore(severity: string, category: string): number {
  * Helper function to get actionable recommendation
  */
 function getActionableRecommendation(finding: AuditFinding, impact: BusinessImpact): string {
-  const baseRecommendation = finding.suggestion;
+  let baseRecommendation = finding.suggestion;
   
-  // Add business context to recommendation
+  // Sanitize the base recommendation first (remove methodology references)
+  baseRecommendation = sanitizeClientLanguage(baseRecommendation);
+  
+  // Add business context to recommendation (confident language, no uncertainty)
   if (impact.conversionImpact === 'High') {
-    return `${baseRecommendation} This fix will directly impact conversion rates and user engagement.`;
+    return `${baseRecommendation} This improvement will directly impact conversion rates and user engagement.`;
   }
   if (impact.complianceRisk === 'Critical' || impact.complianceRisk === 'High') {
     return `${baseRecommendation} This is critical for accessibility compliance and legal risk mitigation.`;
