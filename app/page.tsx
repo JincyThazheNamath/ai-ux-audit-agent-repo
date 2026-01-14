@@ -151,50 +151,51 @@ Report ID: ${result.timestamp}
   };
 
   return (
-    <div className="min-h-screen bg-[#0a1628]">
-        <div className="container mx-auto px-4 py-8 max-w-7xl">
+    <div className="min-h-screen bg-[#0a1628] overflow-x-hidden flex flex-col sm:!block">
+        <div className="container mx-auto px-4 py-8 max-w-7xl flex-1 sm:!flex-none flex flex-col sm:!block">
           {/* Header */}
-          <div className="text-center mb-12">
-            <h1 className="text-5xl font-bold text-white mb-4">
+          <div className="text-center mb-6 sm:mb-8 md:mb-12">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-3 sm:mb-4">
               AI UX Audit Agent
             </h1>
             <div className="flex items-center justify-center gap-4 mb-4">
               <ViewModeSwitcher />
             </div>
-            <p className="text-xl text-gray-300 max-w-2xl mx-auto">
+            <p className="text-sm sm:text-base md:text-lg text-gray-300 max-w-2xl mx-auto px-4">
               Automated UX analysis powered by AI. Get instant insights on accessibility, 
               usability, design consistency, and more.
             </p>
           </div>
 
         {/* Input Section */}
-        <div className="bg-[#1a2332] rounded-2xl shadow-xl p-8 mb-8 border border-gray-700/50">
-          <div className="flex gap-4">
+        <div className="bg-[#1a2332] rounded-2xl shadow-xl p-4 sm:p-6 md:p-8 mb-6 sm:mb-8 border border-gray-700/50">
+          <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
               <input
                 type="text"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && !loading && handleAudit()}
-                placeholder="Enter website URL (e.g., example.com or https://example.com)"
-                className="w-full px-6 py-4 text-lg bg-[#0a1628] border-2 border-gray-600 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                placeholder="Enter website URL"
+                className="w-full px-4 sm:px-6 py-3 sm:py-4 text-[16px] sm:text-lg bg-[#0a1628] border-2 border-gray-600 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                style={{ fontSize: '16px' }}
                 disabled={loading}
               />
             </div>
             <button
               onClick={handleAudit}
               disabled={loading}
-              className="px-8 py-4 bg-[#14b8a6] text-white rounded-xl font-semibold hover:bg-[#0d9488] disabled:bg-teal-800 disabled:cursor-not-allowed transition-colors flex items-center gap-2 shadow-lg"
+              className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-4 bg-[#14b8a6] text-white rounded-xl font-semibold hover:bg-[#0d9488] disabled:bg-teal-800 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 shadow-lg"
             >
               {loading ? (
                 <>
                   <Loader2 className="animate-spin" size={20} />
-                  Analyzing...
+                  <span className="text-sm sm:text-base">Analyzing...</span>
                 </>
               ) : (
                 <>
                   <Search size={20} />
-                  Audit Website
+                  <span className="text-sm sm:text-base">Audit Website</span>
                 </>
               )}
             </button>
@@ -220,7 +221,7 @@ Report ID: ${result.timestamp}
             </Suspense>
 
             {/* Findings */}
-            <div className="bg-[#1a2332] rounded-2xl shadow-xl p-8 border border-gray-700/50">
+            <div className="bg-[#1a2332] rounded-2xl shadow-xl p-4 sm:p-6 md:p-8 border border-gray-700/50">
               <Suspense fallback={<div className="animate-pulse">Loading filters...</div>}>
                 <FilterDropdown
                   filterCategory={filterCategory}
@@ -268,8 +269,8 @@ Report ID: ${result.timestamp}
         )}
 
           {/* Footer */}
-          <div className="text-center mt-12 text-gray-400">
-            <p>Powered by AI • Built for Lunim Studio</p>
+          <div className="text-center mt-8 sm:mt-12 pt-8 sm:pt-0 text-gray-400 flex-shrink-0 sm:!flex-none">
+            <p className="text-xs sm:text-base">Powered by AI • Built for Lunim Studio</p>
           </div>
         </div>
       </div>

@@ -15,12 +15,12 @@ export default function ViewModeSwitcher() {
   const { mode, setMode } = useViewMode();
 
   return (
-    <div className="flex items-center gap-2 bg-[#0a1628] rounded-lg p-1 border border-gray-700/50">
+    <div className="flex items-center gap-1 sm:gap-2 bg-[#0a1628] rounded-lg p-1 border border-gray-700/50">
       <button
         type="button"
         onClick={() => setMode('professional')}
         className={`
-          flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200
+          flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-all duration-200
           ${mode === 'professional'
             ? 'bg-[#14b8a6] text-white shadow-lg shadow-teal-500/20'
             : 'text-gray-400 hover:text-gray-300 hover:bg-gray-800/50'
@@ -29,7 +29,7 @@ export default function ViewModeSwitcher() {
         aria-pressed={mode === 'professional'}
         aria-label="Professional view mode"
       >
-        <Code size={16} />
+        <Code size={14} className="sm:w-4 sm:h-4" />
         <span className="hidden sm:inline">Professional</span>
         <span className="sm:hidden">Pro</span>
       </button>
@@ -37,7 +37,7 @@ export default function ViewModeSwitcher() {
         type="button"
         onClick={() => setMode('business')}
         className={`
-          flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200
+          flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-all duration-200
           ${mode === 'business'
             ? 'bg-[#14b8a6] text-white shadow-lg shadow-teal-500/20'
             : 'text-gray-400 hover:text-gray-300 hover:bg-gray-800/50'
@@ -46,7 +46,7 @@ export default function ViewModeSwitcher() {
         aria-pressed={mode === 'business'}
         aria-label="Business view mode"
       >
-        <TrendingUp size={16} />
+        <TrendingUp size={14} className="sm:w-4 sm:h-4" />
         <span className="hidden sm:inline">Business</span>
         <span className="sm:hidden">Biz</span>
       </button>

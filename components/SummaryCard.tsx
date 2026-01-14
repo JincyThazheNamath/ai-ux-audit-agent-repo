@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Share2, Download, X, ZoomIn, Eye, EyeOff, AlertCircle, TrendingUp, Target, Award, BarChart3 } from 'lucide-react';
+import { Share2, Download, X, ZoomIn, Eye, EyeOff, AlertCircle, TrendingUp, Target, Award, BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { AuditResult, AuditFinding } from '../types/audit';
 import { useViewMode } from '../contexts/ViewModeContext';
 import { transformSummaryForBusiness } from '../lib/viewAdapters';
@@ -30,11 +30,26 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
   const [isClosing, setIsClosing] = useState(false);
   const [showOverlays, setShowOverlays] = useState(true);
   const [hoveredOverlay, setHoveredOverlay] = useState<number | null>(null);
+  const [clickedOverlay, setClickedOverlay] = useState<number | null>(null);
+  const [currentIssueIndex, setCurrentIssueIndex] = useState<number>(0); // For cycling through issues in mobile
+  const [isMobile, setIsMobile] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
 
   // Get business view data if in business mode
   const businessView = mode === 'business' ? transformSummaryForBusiness(result) : null;
+
+  // Detect mobile view
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768); // md breakpoint
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Handle ESC key to close modal
   useEffect(() => {
@@ -64,7 +79,35 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
       setShowModal(false);
       setIsClosing(false);
       setShowOverlays(true); // Reset overlay state
+      setClickedOverlay(null); // Reset clicked overlay on mobile
+      setCurrentIssueIndex(0); // Reset issue index
     }, 350); // Match animation duration (350ms)
+  };
+
+  // Helper function to create concise CEO-friendly mobile description
+  const getMobileSummary = (finding: AuditFinding): { title: string; impact: string } => {
+    const title = finding.issue;
+    
+    // Extract key impact point - first meaningful sentence (CEO-friendly)
+    const fullDesc = finding.description;
+    const sentences = fullDesc.split(/[.!?]/).filter(s => s.trim().length > 15);
+    
+    // Get first sentence, limit to 70 chars for mobile readability
+    let impact = sentences.length > 0 
+      ? sentences[0].trim()
+      : fullDesc;
+    
+    // Truncate if too long, but keep it natural
+    if (impact.length > 70) {
+      // Try to break at word boundary
+      const truncated = impact.substring(0, 67);
+      const lastSpace = truncated.lastIndexOf(' ');
+      impact = lastSpace > 50 
+        ? truncated.substring(0, lastSpace) + '...'
+        : truncated + '...';
+    }
+    
+    return { title, impact };
   };
 
   // Get severity color
@@ -189,27 +232,27 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
 
   return (
     <>
-      <div className="bg-[#1a2332] rounded-2xl shadow-xl p-8 border border-gray-700/50">
+      <div className="bg-[#1a2332] rounded-2xl shadow-xl p-4 sm:p-6 md:p-8 border border-gray-700/50 overflow-x-hidden">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-4">
-          <div className="flex-1">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-2xl font-bold text-white">Audit Summary</h2>
-              <div className="flex gap-2">
+          <div className="flex-1 w-full">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-2 gap-2">
+              <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-white">Audit Summary</h2>
+              <div className="flex gap-2 w-full sm:w-auto">
                 <button
                   onClick={onShare}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+                  className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-colors"
                   title="Share Report"
                 >
-                  <Share2 size={16} />
-                  Share
+                  <Share2 size={14} className="sm:w-4 sm:h-4" />
+                  <span>Share</span>
                 </button>
                 <button
                   onClick={onDownload}
-                  className="px-4 py-2 bg-[#0a1628] hover:bg-[#0f1d35] border border-gray-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+                  className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-[#0a1628] hover:bg-[#0f1d35] border border-gray-600 text-white rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-colors"
                   title="Download Report"
                 >
-                  <Download size={16} />
-                  Download
+                  <Download size={14} className="sm:w-4 sm:h-4" />
+                  <span>Download</span>
                 </button>
               </div>
             </div>
@@ -260,41 +303,41 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
         {mode === 'business' && businessView && (
           <div className="mb-6 space-y-4">
             {/* Main Executive Summary Card */}
-            <div className="bg-gradient-to-br from-teal-900/20 to-blue-900/20 rounded-xl border border-teal-500/30 p-6">
-              <div className="flex items-start gap-3 mb-4">
-                <TrendingUp className="text-teal-400 mt-1" size={24} />
-                <div className="flex-1">
-                  <h3 className="text-xl font-bold text-white mb-2">Executive Summary</h3>
-                  <p className="text-gray-300 leading-relaxed mb-4">{businessView.executiveSummary}</p>
+            <div className="bg-gradient-to-br from-teal-900/20 to-blue-900/20 rounded-xl border border-teal-500/30 p-4 sm:p-6">
+              <div className="flex items-start gap-2 sm:gap-3 mb-3 sm:mb-4">
+                <TrendingUp className="text-teal-400 mt-1 flex-shrink-0" size={20} style={{ width: '20px', height: '20px' }} />
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base sm:text-lg md:text-xl font-bold text-white mb-2">Executive Summary</h3>
+                  <p className="text-sm sm:text-base text-gray-300 leading-relaxed mb-3 sm:mb-4">{businessView.executiveSummary}</p>
                 </div>
               </div>
             </div>
 
             {/* Industry Benchmark Comparison */}
             {businessView.industryBenchmark && (
-              <div className="bg-[#0a1628] rounded-xl border border-gray-700/50 p-6">
-                <div className="flex items-center gap-3 mb-4">
-                  <BarChart3 className="text-blue-400" size={20} />
-                  <h4 className="text-lg font-semibold text-white">Industry Benchmark Comparison</h4>
+              <div className="bg-[#0a1628] rounded-xl border border-gray-700/50 p-4 sm:p-6">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3 mb-4">
+                  <BarChart3 className="text-blue-400" size={18} />
+                  <h4 className="text-base sm:text-lg font-semibold text-white">Industry Benchmark Comparison</h4>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-teal-900/20 rounded-lg p-4 border border-teal-500/30">
-                    <div className="text-2xl font-bold text-teal-300 mb-1">
+                  <div className="bg-teal-900/20 rounded-lg p-3 sm:p-4 border border-teal-500/30">
+                    <div className="text-xl sm:text-2xl font-bold text-teal-300 mb-1 break-words">
                       Top {businessView.industryBenchmark.percentile}%
                     </div>
-                    <div className="text-sm text-gray-400">Industry Positioning</div>
+                    <div className="text-xs sm:text-sm text-gray-400">Industry Positioning</div>
                   </div>
-                  <div className="bg-blue-900/20 rounded-lg p-4 border border-blue-500/30">
-                    <div className="text-2xl font-bold text-blue-300 mb-1 capitalize">
+                  <div className="bg-blue-900/20 rounded-lg p-3 sm:p-4 border border-blue-500/30">
+                    <div className="text-xl sm:text-2xl font-bold text-blue-300 mb-1 capitalize break-words">
                       {businessView.industryBenchmark.positioning}
                     </div>
-                    <div className="text-sm text-gray-400">Performance Level</div>
+                    <div className="text-xs sm:text-sm text-gray-400">Performance Level</div>
                   </div>
-                  <div className="bg-purple-900/20 rounded-lg p-4 border border-purple-500/30">
-                    <div className="text-2xl font-bold text-purple-300 mb-1">
+                  <div className="bg-purple-900/20 rounded-lg p-3 sm:p-4 border border-purple-500/30">
+                    <div className="text-xl sm:text-2xl font-bold text-purple-300 mb-1 break-words">
                       {result.summary.overallScore}/100
                     </div>
-                    <div className="text-sm text-gray-400">Quality Score</div>
+                    <div className="text-xs sm:text-sm text-gray-400">Quality Score</div>
                   </div>
                 </div>
                 <p className="text-sm text-gray-300 mt-4 italic">
@@ -341,11 +384,11 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
                 <div className="space-y-3">
                   {businessView.prioritizedActionPlan.map((plan, idx) => (
                     <div key={idx} className="border-l-4 border-teal-500 pl-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-semibold text-teal-400">{plan.phase}</span>
-                        <span className="text-xs text-gray-500">•</span>
-                        <span className="text-xs text-gray-400">{plan.timeline}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded ${
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-1">
+                        <span className="text-xs font-semibold text-teal-400 break-words">{plan.phase}</span>
+                        <span className="text-xs text-gray-500 hidden sm:inline">•</span>
+                        <span className="text-xs text-gray-400 break-words">{plan.timeline}</span>
+                        <span className={`text-xs px-1.5 sm:px-2 py-0.5 rounded flex-shrink-0 ${
                           plan.priority === 'Critical' ? 'bg-red-900/30 text-red-300' :
                           plan.priority === 'High' ? 'bg-orange-900/30 text-orange-300' :
                           plan.priority === 'Medium' ? 'bg-yellow-900/30 text-yellow-300' :
@@ -380,19 +423,19 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
         )}
 
         {/* Overall Score */}
-        <div className="mb-6 p-6 bg-[#0a1628] rounded-xl border border-gray-700/50">
+        <div className="mb-6 p-4 sm:p-6 bg-[#0a1628] rounded-xl border border-gray-700/50">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-gray-300 mb-1">
+            <h3 className="text-base sm:text-lg font-semibold text-gray-300 mb-1">
               {mode === 'business' ? 'Web Quality Score' : 'Overall UX Score'}
             </h3>
-            <p className="text-sm text-gray-400">
+            <p className="text-xs sm:text-sm text-gray-400">
               {mode === 'business' 
                 ? 'Evaluated against industry-standard web quality benchmarks'
                 : 'Based on severity-weighted analysis'}
             </p>
           </div>
-          <div className={`text-5xl font-bold ${getScoreColor(result.summary.overallScore)}`}>
+          <div className={`text-3xl sm:text-4xl md:text-5xl font-bold ${getScoreColor(result.summary.overallScore)}`}>
             {result.summary.overallScore}
           </div>
         </div>
@@ -410,26 +453,26 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
 
         {/* Severity Breakdown */}
         <div className="mb-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Issues by Severity</h3>
+        <h3 className="text-base sm:text-lg font-semibold text-white mb-4">Issues by Severity</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div className="bg-[#0a1628] p-4 rounded-lg text-center border border-gray-700/50">
-            <div className="text-3xl font-bold text-white">{result.summary.totalIssues}</div>
-            <div className="text-sm text-gray-300 mt-1">Total Issues</div>
+            <div className="text-2xl sm:text-3xl font-bold text-white">{result.summary.totalIssues}</div>
+            <div className="text-xs sm:text-sm text-gray-300 mt-1">Total Issues</div>
           </div>
           <div className="bg-red-900/30 p-4 rounded-lg text-center border-2 border-red-500/50">
-            <div className="text-3xl font-bold text-red-300">{result.summary.critical}</div>
-            <div className="text-sm text-red-200 mt-1">Critical</div>
+            <div className="text-2xl sm:text-3xl font-bold text-red-300">{result.summary.critical}</div>
+            <div className="text-xs sm:text-sm text-red-200 mt-1">Critical</div>
           </div>
           <div className="bg-orange-900/30 p-4 rounded-lg text-center border-2 border-orange-500/50">
-            <div className="text-3xl font-bold text-orange-300">{result.summary.high}</div>
-            <div className="text-sm text-orange-200 mt-1">High</div>
+            <div className="text-2xl sm:text-3xl font-bold text-orange-300">{result.summary.high}</div>
+            <div className="text-xs sm:text-sm text-orange-200 mt-1">High</div>
           </div>
           <div className="bg-yellow-900/30 p-4 rounded-lg text-center border-2 border-yellow-500/50">
-            <div className="text-3xl font-bold text-yellow-300">{result.summary.medium}</div>
-            <div className="text-sm text-yellow-200 mt-1">Medium</div>
+            <div className="text-2xl sm:text-3xl font-bold text-yellow-300">{result.summary.medium}</div>
+            <div className="text-xs sm:text-sm text-yellow-200 mt-1">Medium</div>
           </div>
           <div className="bg-teal-900/30 p-4 rounded-lg text-center border-2 border-teal-500/50">
-            <div className="text-3xl font-bold text-teal-300">{result.summary.low}</div>
+            <div className="text-2xl sm:text-3xl font-bold text-teal-300">{result.summary.low}</div>
             <div className="text-sm text-teal-200 mt-1">Low</div>
           </div>
         </div>
@@ -437,31 +480,31 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
 
         {/* Category Breakdown */}
         <div>
-        <h3 className="text-lg font-semibold text-white mb-4">Issues by Category</h3>
+        <h3 className="text-base sm:text-lg font-semibold text-white mb-4">Issues by Category</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div className="bg-[#0a1628] p-4 rounded-lg text-center border border-gray-700/50 hover:border-teal-500/50 transition-colors">
-            <div className="text-2xl mb-2">♿</div>
-            <div className="text-2xl font-bold text-white">{result.summary.accessibility}</div>
-            <div className="text-sm text-gray-400 mt-1">Accessibility</div>
+            <div className="text-xl sm:text-2xl mb-2">♿</div>
+            <div className="text-xl sm:text-2xl font-bold text-white">{result.summary.accessibility}</div>
+            <div className="text-xs sm:text-sm text-gray-400 mt-1">Accessibility</div>
           </div>
           <div className="bg-[#0a1628] p-4 rounded-lg text-center border border-gray-700/50 hover:border-teal-500/50 transition-colors">
-            <div className="text-2xl mb-2">👆</div>
-            <div className="text-2xl font-bold text-white">{result.summary.usability}</div>
-            <div className="text-sm text-gray-400 mt-1">Usability</div>
+            <div className="text-xl sm:text-2xl mb-2">👆</div>
+            <div className="text-xl sm:text-2xl font-bold text-white">{result.summary.usability}</div>
+            <div className="text-xs sm:text-sm text-gray-400 mt-1">Usability</div>
           </div>
           <div className="bg-[#0a1628] p-4 rounded-lg text-center border border-gray-700/50 hover:border-teal-500/50 transition-colors">
-            <div className="text-2xl mb-2">🎨</div>
-            <div className="text-2xl font-bold text-white">{result.summary.design}</div>
-            <div className="text-sm text-gray-400 mt-1">Design</div>
+            <div className="text-xl sm:text-2xl mb-2">🎨</div>
+            <div className="text-xl sm:text-2xl font-bold text-white">{result.summary.design}</div>
+            <div className="text-xs sm:text-sm text-gray-400 mt-1">Design</div>
           </div>
           <div className="bg-[#0a1628] p-4 rounded-lg text-center border border-gray-700/50 hover:border-teal-500/50 transition-colors">
-            <div className="text-2xl mb-2">⚡</div>
-            <div className="text-2xl font-bold text-white">{result.summary.performance}</div>
-            <div className="text-sm text-gray-400 mt-1">Performance</div>
+            <div className="text-xl sm:text-2xl mb-2">⚡</div>
+            <div className="text-xl sm:text-2xl font-bold text-white">{result.summary.performance}</div>
+            <div className="text-xs sm:text-sm text-gray-400 mt-1">Performance</div>
           </div>
           <div className="bg-[#0a1628] p-4 rounded-lg text-center border border-gray-700/50 hover:border-teal-500/50 transition-colors">
-            <div className="text-2xl mb-2">🔍</div>
-            <div className="text-2xl font-bold text-white">{result.summary.seo}</div>
+            <div className="text-xl sm:text-2xl mb-2">🔍</div>
+            <div className="text-xl sm:text-2xl font-bold text-white">{result.summary.seo}</div>
             <div className="text-sm text-gray-400 mt-1">SEO</div>
           </div>
         </div>
@@ -471,28 +514,30 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
       {/* Full-size Screenshot Modal */}
       {showModal && result.screenshot && (
         <div
-          className={`fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 ${
+          className={`fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-0 sm:p-4 ${
             isClosing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'
           }`}
           onClick={handleCloseModal}
+          style={{ zIndex: 50, height: '100vh', width: '100vw' }}
         >
           {/* Close button - positioned relative to viewport, outside screenshot */}
           <button
             onClick={handleCloseModal}
-            className={`fixed top-8 right-8 z-20 bg-black/90 hover:bg-black text-white rounded-full p-3 border-2 border-gray-600 hover:border-teal-500 transition-all ease-out shadow-lg ${
+            className={`fixed top-4 sm:top-8 right-4 sm:right-8 z-20 bg-black/90 hover:bg-black text-white rounded-full p-2 sm:p-3 border-2 border-gray-600 hover:border-teal-500 transition-all ease-out shadow-lg ${
               isClosing ? 'opacity-0 scale-95 duration-350' : 'opacity-100 scale-100 hover:scale-110 duration-200'
             }`}
             style={isClosing ? { transitionDuration: '350ms' } : {}}
             aria-label="Close screenshot"
           >
-            <X size={24} />
+            <X size={18} className="sm:w-6 sm:h-6" />
           </button>
 
           <div
-            className={`relative max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center ${
+            className={`relative max-w-7xl max-h-[90vh] sm:max-h-[90vh] h-full sm:h-auto w-full flex items-center justify-center ${
               isClosing ? 'modal-content-exit' : 'modal-content-enter'
             }`}
             onClick={(e) => e.stopPropagation()}
+            style={isMobile ? { height: '100vh', maxHeight: '100vh' } : {}}
           >
             {/* Toggle Overlays Button */}
             <button
@@ -500,18 +545,47 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
                 e.stopPropagation();
                 setShowOverlays(!showOverlays);
               }}
-              className={`fixed top-8 left-8 z-20 bg-black/90 hover:bg-black text-white rounded-lg px-4 py-2 border-2 border-gray-600 hover:border-teal-500 transition-all ease-out shadow-lg flex items-center gap-2 ${
+              className={`fixed top-4 sm:top-8 left-4 sm:left-8 z-20 bg-black/90 hover:bg-black text-white rounded-lg px-2 sm:px-4 py-1.5 sm:py-2 border-2 border-gray-600 hover:border-teal-500 transition-all ease-out shadow-lg flex items-center gap-1 sm:gap-2 ${
                 isClosing ? 'opacity-0 scale-95 duration-350' : 'opacity-100 scale-100 hover:scale-105 duration-200'
               }`}
               style={isClosing ? { transitionDuration: '350ms' } : {}}
               aria-label={showOverlays ? 'Hide problem areas' : 'Show problem areas'}
             >
-              {showOverlays ? <EyeOff size={20} /> : <Eye size={20} />}
-              <span className="text-sm font-medium">{showOverlays ? 'Hide Issues' : 'Show Issues'}</span>
+              {showOverlays ? <EyeOff size={16} className="sm:w-5 sm:h-5" /> : <Eye size={16} className="sm:w-5 sm:h-5" />}
+              <span className="text-xs sm:text-sm font-medium">{showOverlays ? 'Hide Issues' : 'Show Issues'}</span>
             </button>
 
+            {/* Backdrop overlay for mobile bottom sheet */}
+            {isMobile && clickedOverlay !== null && (
+              <div
+                className="fixed inset-0 bg-black/60"
+                onClick={(e) => {
+                  // Only close if clicking directly on backdrop, not on bottom sheet
+                  if (e.target === e.currentTarget) {
+                    e.stopPropagation();
+                    setClickedOverlay(null);
+                    setCurrentIssueIndex(0);
+                  }
+                }}
+              />
+            )}
+
             {/* Screenshot container */}
-            <div className="relative w-full h-full flex items-center justify-center">
+            <div 
+              className="relative w-full h-full flex items-center justify-center"
+              style={{ 
+                zIndex: 10,
+                // On mobile, when bottom sheet is open, disable pointer events so buttons are clickable
+                pointerEvents: isMobile && clickedOverlay !== null ? 'none' : 'auto'
+              }}
+              onClick={(e) => {
+                // Close overlay when clicking on image background on mobile
+                if (isMobile && clickedOverlay !== null && e.target === e.currentTarget) {
+                  setClickedOverlay(null);
+                  setCurrentIssueIndex(0);
+                }
+              }}
+            >
               <img
                 ref={imageRef}
                 src={result.screenshot}
@@ -523,58 +597,239 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
                     setImageDimensions({ width: rect.width, height: rect.height });
                   }
                 }}
+                onClick={(e) => {
+                  // Close overlay when clicking on image on mobile
+                  if (isMobile && clickedOverlay !== null) {
+                    e.stopPropagation();
+                    setClickedOverlay(null);
+                  }
+                }}
               />
               
               {/* Problem Area Overlays */}
               {showOverlays && imageDimensions.width > 0 && Object.entries(groupedFindings).map(([key, group], idx) => {
                 const { position, findings, highestSeverity } = group;
                 const isHovered = hoveredOverlay === idx;
+                const isClicked = clickedOverlay === idx;
+                const shouldShowOverlay = isMobile ? isClicked : isHovered;
+                const shouldShowBox = isMobile ? isClicked : true;
+                // On mobile, when bottom sheet is open, disable pointer events on inactive overlays
+                const shouldDisablePointerEvents = isMobile && clickedOverlay !== null && clickedOverlay !== idx;
                 
                 return (
                   <div
                     key={key}
-                    className="absolute transition-all duration-200 cursor-pointer"
+                    className="absolute transition-all duration-200"
                     style={{
                       top: `${position.top}%`,
                       left: `${position.left}%`,
                       width: `${position.width}%`,
                       height: `${position.height}%`,
-                      backgroundColor: isHovered ? getSeverityColor(highestSeverity) : getSeverityColor(highestSeverity),
-                      border: `2px solid ${getSeverityBorderColor(highestSeverity)}`,
+                      // Mobile: Subtle static overlay instead of blinking pulse
+                      backgroundColor: isMobile && isClicked 
+                        ? getSeverityColor(highestSeverity).replace('0.3', '0.2') // Static, more visible
+                        : shouldShowBox ? getSeverityColor(highestSeverity) : 'transparent',
+                      border: isMobile && isClicked
+                        ? `1px dashed ${getSeverityBorderColor(highestSeverity)}` // Dashed instead of solid
+                        : shouldShowBox ? `2px solid ${getSeverityBorderColor(highestSeverity)}` : 'none',
                       borderRadius: '4px',
-                      boxShadow: isHovered ? `0 0 20px ${getSeverityBorderColor(highestSeverity)}` : 'none',
-                      zIndex: isHovered ? 15 : 10,
+                      boxShadow: shouldShowOverlay ? `0 0 10px ${getSeverityBorderColor(highestSeverity)}` : 'none',
+                      zIndex: shouldShowOverlay ? 15 : 10,
+                      // Remove any animation that causes blinking - use static opacity
+                      animation: 'none',
+                      opacity: isMobile && isClicked ? 1 : undefined, // Static, no blinking
+                      // Disable pointer events on inactive overlays when bottom sheet is open
+                      pointerEvents: shouldDisablePointerEvents ? 'none' : 'auto',
                     }}
-                    onMouseEnter={() => setHoveredOverlay(idx)}
-                    onMouseLeave={() => setHoveredOverlay(null)}
+                    onMouseEnter={() => !isMobile && setHoveredOverlay(idx)}
+                    onMouseLeave={() => !isMobile && setHoveredOverlay(null)}
                   >
-                    {/* Severity Badge */}
+                    {/* Severity Badge - Hidden on mobile */}
+                    {!isMobile && (
                     <div
                       className={`absolute -top-3 -left-3 bg-black/90 px-2 py-1 rounded-md text-xs font-bold uppercase ${getSeverityTextColor(highestSeverity)} border-2`}
                       style={{ borderColor: getSeverityBorderColor(highestSeverity) }}
                     >
                       {highestSeverity}
                     </div>
+                    )}
                     
-                    {/* Issue Count Badge */}
-                    <div className="absolute -top-3 -right-3 bg-black/90 text-white px-2 py-1 rounded-full text-xs font-bold border-2 border-white/50">
+                    {/* Issue Count Badge - Always visible, clickable on mobile */}
+                    <div 
+                      className={`absolute -top-3 -right-3 bg-black/90 text-white px-2 py-1 rounded-full text-xs font-bold border-2 border-white/50 ${isMobile ? 'cursor-pointer hover:bg-teal-600 transition-colors' : ''}`}
+                      onClick={(e) => {
+                        if (isMobile) {
+                          e.stopPropagation();
+                          setClickedOverlay(clickedOverlay === idx ? null : idx);
+                          setCurrentIssueIndex(0); // Reset to first issue when opening
+                        }
+                      }}
+                    >
                       {findings.length}
                     </div>
                     
-                    {/* Hover Tooltip */}
-                    {isHovered && (
+                    {/* Hover/Click Tooltip */}
+                    {shouldShowOverlay && (
                       <div
-                        className="absolute top-full left-0 mt-2 w-80 bg-black/95 text-white p-4 rounded-lg shadow-2xl border-2 z-30"
-                        style={{ borderColor: getSeverityBorderColor(highestSeverity) }}
-                        onMouseEnter={() => setHoveredOverlay(idx)}
-                        onMouseLeave={() => setHoveredOverlay(null)}
+                        className={`${isMobile 
+                          ? 'fixed bottom-0 left-0 right-0 w-full max-w-full shadow-2xl rounded-t-2xl' 
+                          : 'absolute top-full left-0 mt-2 w-80'} bg-black/95 text-white ${isMobile ? 'p-4 pb-6' : 'p-4'} border-2 ${isMobile ? 'border-b-0' : ''} ${isMobile ? 'overflow-y-auto' : ''}`}
+                        style={{ 
+                          borderColor: getSeverityBorderColor(highestSeverity),
+                          maxHeight: isMobile ? '70vh' : 'auto',
+                          zIndex: 100, // Much higher than Hide Issues button (z-20) to ensure visibility
+                          // Mobile: Fixed bottom sheet for full visibility
+                          pointerEvents: 'auto', // Ensure buttons are clickable
+                          ...(isMobile ? {
+                            position: 'fixed',
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            width: '100%',
+                            maxWidth: '100%',
+                            borderTopLeftRadius: '1rem',
+                            borderTopRightRadius: '1rem',
+                            borderBottomLeftRadius: 0,
+                            borderBottomRightRadius: 0,
+                          } : {})
+                        }}
+                        onMouseEnter={() => !isMobile && setHoveredOverlay(idx)}
+                        onMouseLeave={() => !isMobile && setHoveredOverlay(null)}
+                        onClick={(e) => {
+                          // Prevent closing when clicking inside the bottom sheet
+                          if (isMobile) {
+                            e.stopPropagation();
+                            e.preventDefault();
+                          }
+                        }}
                       >
-                        <div className="flex items-center gap-2 mb-2">
-                          <AlertCircle size={16} className={getSeverityTextColor(highestSeverity)} />
-                          <span className={`font-bold text-sm ${getSeverityTextColor(highestSeverity)}`}>
-                            {findings.length} {findings.length === 1 ? 'Issue' : 'Issues'} Found
-                          </span>
+                        {/* Drag handle indicator for mobile */}
+                        {isMobile && (
+                          <div className="flex justify-center mb-3">
+                            <div className="w-12 h-1 bg-gray-600 rounded-full"></div>
+                          </div>
+                        )}
+                        
+                        {/* Header */}
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-1.5">
+                            <AlertCircle size={isMobile ? 14 : 16} className={getSeverityTextColor(highestSeverity)} />
+                            <span className={`font-bold ${isMobile ? 'text-xs' : 'text-sm'} ${getSeverityTextColor(highestSeverity)}`}>
+                              {isMobile 
+                                ? `Issue ${currentIssueIndex + 1} of ${findings.length}`
+                                : `${findings.length} ${findings.length === 1 ? 'Issue' : 'Issues'}`}
+                            </span>
+                            {/* Severity tag inside tooltip for mobile */}
+                            {isMobile && (
+                              <span className={`text-[10px] px-2 py-0.5 rounded uppercase font-bold ${getSeverityTextColor(highestSeverity)} bg-black/50 border`}
+                                style={{ borderColor: getSeverityBorderColor(highestSeverity) }}>
+                                {highestSeverity}
+                              </span>
+                            )}
+                          </div>
+                          {isMobile && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setClickedOverlay(null);
+                                setCurrentIssueIndex(0);
+                              }}
+                              className="text-gray-400 hover:text-white p-1"
+                              aria-label="Close"
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
                         </div>
+                        
+                        {/* Content - Different for mobile vs desktop */}
+                        {isMobile ? (
+                          // Mobile: Single issue view with navigation
+                          <div className="relative">
+                            {findings.length > 0 && (() => {
+                              const currentFinding = findings[currentIssueIndex];
+                              const mobileSummary = getMobileSummary(currentFinding);
+                              return (
+                                <div className="bg-gray-900/50 rounded-md p-3 border-l-2" 
+                                  style={{ borderColor: getSeverityBorderColor(currentFinding.severity) }}>
+                                  <div className="font-semibold text-xs text-white leading-tight mb-2">
+                                    {mobileSummary.title}
+                                  </div>
+                                  <div className="text-[11px] text-gray-300 leading-snug mb-2">
+                                    {mobileSummary.impact}
+                                  </div>
+                                  <div className="text-[10px] text-gray-500 flex items-center gap-1">
+                                    <span>📍</span>
+                                    <span className="truncate">{currentFinding.location}</span>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                            
+                            {/* Navigation arrows */}
+                            {findings.length > 1 && (
+                              <div 
+                                className="flex items-center justify-between mt-3 pt-3 border-t border-gray-700"
+                                style={{ pointerEvents: 'auto' }}
+                                onClick={(e) => {
+                                  // Prevent any clicks in navigation area from closing the sheet
+                                  e.stopPropagation();
+                                }}
+                              >
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    setCurrentIssueIndex((prev) => 
+                                      prev === 0 ? findings.length - 1 : prev - 1
+                                    );
+                                  }}
+                                  onTouchStart={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                  }}
+                                  onTouchEnd={(e) => {
+                                    e.stopPropagation();
+                                  }}
+                                  className="flex items-center gap-1.5 px-4 py-2 bg-teal-600/20 hover:bg-teal-600/30 active:bg-teal-600/40 text-teal-300 rounded-lg transition-colors text-xs font-medium touch-manipulation"
+                                  style={{ pointerEvents: 'auto', zIndex: 101 }}
+                                  aria-label="Previous issue"
+                                  type="button"
+                                >
+                                  <ChevronLeft size={14} />
+                                  <span>Previous</span>
+                                </button>
+                                <span className="text-xs text-gray-400">
+                                  {currentIssueIndex + 1} / {findings.length}
+                          </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    setCurrentIssueIndex((prev) => 
+                                      prev === findings.length - 1 ? 0 : prev + 1
+                                    );
+                                  }}
+                                  onTouchStart={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                  }}
+                                  onTouchEnd={(e) => {
+                                    e.stopPropagation();
+                                  }}
+                                  className="flex items-center gap-1.5 px-4 py-2 bg-teal-600/20 hover:bg-teal-600/30 active:bg-teal-600/40 text-teal-300 rounded-lg transition-colors text-xs font-medium touch-manipulation"
+                                  style={{ pointerEvents: 'auto', zIndex: 101 }}
+                                  aria-label="Next issue"
+                                  type="button"
+                                >
+                                  <span>Next</span>
+                                  <ChevronRight size={14} />
+                                </button>
+                              </div>
+                            )}
+                        </div>
+                        ) : (
+                          // Desktop: Full detailed view (unchanged)
                         <div className="space-y-2 max-h-64 overflow-y-auto">
                           {findings.map((finding, fIdx) => (
                             <div key={fIdx} className="border-l-2 pl-3 pb-2" style={{ borderColor: getSeverityBorderColor(finding.severity) }}>
@@ -584,6 +839,7 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
                             </div>
                           ))}
                         </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -591,8 +847,8 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
               })}
             </div>
 
-            {/* Legend */}
-            {showOverlays && (
+            {/* Legend - Hidden on mobile */}
+            {showOverlays && !isMobile && (
               <div
                 className={`fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-black/90 text-white px-6 py-3 rounded-lg shadow-lg border-2 border-gray-600 z-20 transition-all ease-out ${
                   isClosing ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'
@@ -624,7 +880,7 @@ export default function SummaryCard({ result, onShare, onDownload }: SummaryCard
 
             {/* Instructions */}
             <div
-              className={`absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-lg text-sm transition-all ease-out ${
+              className={`hidden sm:block absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-lg text-sm transition-all ease-out ${
                 isClosing ? 'opacity-0 translate-y-4' : showOverlays ? 'opacity-0' : 'opacity-100 translate-y-0'
               }`}
               style={{ transitionDuration: isClosing ? '350ms' : '200ms' }}

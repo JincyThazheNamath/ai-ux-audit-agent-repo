@@ -23,7 +23,7 @@ export default function FilterDropdown({
 }: FilterDropdownProps) {
   return (
     <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-4">
-      <h2 className="text-2xl font-bold text-white">
+      <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-white">
         Findings ({filteredCount})
       </h2>
       
