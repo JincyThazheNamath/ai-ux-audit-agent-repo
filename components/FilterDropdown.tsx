@@ -28,13 +28,14 @@ export default function FilterDropdown({
       </h2>
       
       {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <Filter size={18} className="text-gray-400" />
+      <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-3">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <Filter size={16} className="text-gray-400 sm:w-[18px] sm:h-[18px] flex-shrink-0" />
           <select
             value={filterCategory}
             onChange={(e) => onCategoryChange(e.target.value)}
-            className="bg-[#0a1628] border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-teal-500"
+            className="w-full sm:w-auto bg-[#0a1628] border border-gray-600 rounded-lg px-3 py-2.5 sm:py-2 text-white text-base sm:text-sm focus:outline-none focus:border-teal-500 appearance-none cursor-pointer"
+            style={{ fontSize: '16px' }}
           >
             <option value="all">All Categories</option>
             <option value="accessibility">♿ Accessibility</option>
@@ -47,7 +48,8 @@ export default function FilterDropdown({
         <select
           value={filterSeverity}
           onChange={(e) => onSeverityChange(e.target.value)}
-          className="bg-[#0a1628] border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-teal-500"
+          className="w-full sm:w-auto bg-[#0a1628] border border-gray-600 rounded-lg px-3 py-2.5 sm:py-2 text-white text-base sm:text-sm focus:outline-none focus:border-teal-500 appearance-none cursor-pointer"
+          style={{ fontSize: '16px' }}
         >
           <option value="all">All Severities</option>
           <option value="critical">Critical</option>
