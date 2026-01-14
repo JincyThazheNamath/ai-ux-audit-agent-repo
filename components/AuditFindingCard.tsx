@@ -73,17 +73,17 @@ export default function AuditFindingCard({
 
   return (
     <div
-      className="border-2 border-gray-700/50 rounded-xl bg-[#0a1628] hover:border-teal-500/50 transition-all"
+      className="border-2 border-gray-700/50 rounded-xl bg-[#0a1628] hover:border-teal-500/50 transition-all overflow-x-hidden"
     >
       <div
-        className="p-6 cursor-pointer"
+        className="p-4 sm:p-6 cursor-pointer"
         onClick={onToggle}
       >
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-3 flex-1">
-            <span className="text-2xl">{getCategoryIcon(finding.category)}</span>
+            <span className="text-xl sm:text-2xl">{getCategoryIcon(finding.category)}</span>
             <div className="flex-1">
-              <h3 className="text-lg font-semibold text-white mb-2">
+              <h3 className="text-base sm:text-lg font-semibold text-white mb-2 break-words">
                 {finding.issue}
               </h3>
               <div className="flex flex-wrap items-center gap-2">
@@ -97,7 +97,7 @@ export default function AuditFindingCard({
                 <span className="text-sm text-gray-400">{finding.location}</span>
               </div>
               {isExpanded && (
-                <p className="text-gray-300 mt-4">
+                <p className="text-sm sm:text-base text-gray-300 mt-4 break-words">
                   {mode === 'business' && businessView 
                     ? businessView.description 
                     : finding.description}
@@ -112,7 +112,7 @@ export default function AuditFindingCard({
       </div>
 
       {isExpanded && (
-        <div className="px-6 pb-6 pt-0 space-y-4">
+        <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-0 space-y-4">
           {/* Business Impact for Business Mode */}
           {mode === 'business' && businessView && (
             <div className="bg-gradient-to-r from-orange-900/20 to-red-900/20 border-l-4 border-orange-500 p-4 rounded-r-lg">
@@ -120,7 +120,7 @@ export default function AuditFindingCard({
                 <TrendingUp className="text-orange-400 mt-0.5" size={18} />
                 <div className="flex-1">
                   <p className="font-semibold text-orange-300 mb-2">Business Impact</p>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                     <div>
                       <span className="text-gray-400">User Impact:</span>
                       <span className="text-white ml-2 font-medium">{businessView.businessImpact.userImpact}</span>
@@ -204,11 +204,11 @@ export default function AuditFindingCard({
 
           {/* Code snippets - only show in Professional mode */}
           {finding.codeSnippet && mode === 'professional' && (
-            <div className="bg-gray-900 rounded-lg p-4 overflow-x-auto border border-gray-700">
+            <div className="bg-gray-900 rounded-lg p-3 sm:p-4 overflow-x-auto border border-gray-700 -mx-4 sm:mx-0">
               <div className="flex items-center gap-2 mb-2">
                 <code className="text-xs text-gray-400 uppercase">Code Example</code>
               </div>
-              <pre className="text-sm text-green-400 font-mono whitespace-pre-wrap">
+              <pre className="text-xs sm:text-sm text-green-400 font-mono whitespace-pre-wrap break-words">
                 <code>{finding.codeSnippet}</code>
               </pre>
             </div>
