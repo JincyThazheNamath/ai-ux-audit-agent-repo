@@ -45,12 +45,14 @@ const progressStore = globalForProgressStore.progressStore;
 const isVercelProduction = process.env.VERCEL === '1' && process.env.NODE_ENV === 'production';
 
 // Vercel KV client (optional - only if @vercel/kv is installed)
-let kvClient: any = null;
+let kv: any = null;
+let useKv = false;
 try {
   // Try to import Vercel KV if available (works in both dev and production)
-  const kv = require('@vercel/kv');
-  if (kv && process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-    kvClient = kv.kv || kv.default || kv;
+  const kvModule = require('@vercel/kv');
+  if (kvModule && process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    kv = kvModule.kv || kvModule.default || kvModule;
+    useKv = true;
     console.log('✅ Vercel KV initialized for persistent storage');
   } else {
     console.log('⚠️ Vercel KV env vars not set (KV_REST_API_URL, KV_REST_API_TOKEN)');
@@ -66,13 +68,27 @@ export function getProgressStoreSize(): number {
 }
 
 // Debug function to log store state
-export function debugProgressStore(): void {
-  console.log('📊 Progress Store Debug:');
-  console.log('   Total jobs:', progressStore.size);
-  console.log('   Job IDs:', Array.from(progressStore.keys()));
-  progressStore.forEach((progress, jobId) => {
-    console.log(`   - ${jobId}: ${progress.status} (${progress.completedPages}/${progress.totalPages})`);
-  });
+export async function debugProgressStore(): Promise<void> {
+  if (useKv && kv) {
+    const allKeys = await kv.keys('audit:*') as string[];
+    console.log('📊 Progress Store Debug (KV):');
+    console.log('   Total jobs:', allKeys.length);
+    console.log('   Job IDs:', allKeys.map((k: string) => k.replace('audit:', '')));
+    for (const key of allKeys) {
+      const jobId = key.replace('audit:', '');
+      const progress = await getProgress(jobId);
+      if (progress) {
+        console.log(`   - ${jobId}: ${progress.status} (${progress.completedPages}/${progress.totalPages})`);
+      }
+    }
+  } else {
+    console.log('📊 Progress Store Debug (in-memory):');
+    console.log('   Total jobs:', progressStore.size);
+    console.log('   Job IDs:', Array.from(progressStore.keys()));
+    progressStore.forEach((progress, jobId) => {
+      console.log(`   - ${jobId}: ${progress.status} (${progress.completedPages}/${progress.totalPages})`);
+    });
+  }
 }
 
 /**
@@ -94,9 +110,9 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
   progressStore.set(jobId, progress);
   
   // Also store in KV if available (for serverless persistence)
-  if (kvClient) {
+  if (useKv && kv) {
     try {
-      await kvClient.set(`audit:progress:${jobId}`, progress, { ex: 3600 }); // Expire after 1 hour
+      await kv.set(`audit:progress:${jobId}`, JSON.stringify(progress), { ex: 3600 }); // Expire after 1 hour
       console.log(`📝 Stored progress in KV: ${jobId}`);
     } catch (kvError: any) {
       console.error('⚠️ Failed to store in KV:', kvError.message);
@@ -130,9 +146,9 @@ export async function updatePageProgress(
 ): Promise<void> {
   // Get progress (checking both memory and KV)
   let progress = progressStore.get(jobId);
-  if (!progress && kvClient) {
+  if (!progress && kv) {
     try {
-      progress = await kvClient.get(`audit:progress:${jobId}`);
+      progress = await kv.get(`audit:progress:${jobId}`);
       if (progress) {
         progressStore.set(jobId, progress);
       }
@@ -240,9 +256,9 @@ export async function updatePageProgress(
 export async function updateStatus(jobId: string, status: AuditProgress['status'], currentPage?: string): Promise<void> {
   // Get progress (checking both memory and KV)
   let progress = progressStore.get(jobId);
-  if (!progress && kvClient) {
+  if (!progress && kv) {
     try {
-      progress = await kvClient.get(`audit:progress:${jobId}`);
+      progress = await kv.get(`audit:progress:${jobId}`);
       if (progress) {
         progressStore.set(jobId, progress);
       }
@@ -261,9 +277,9 @@ export async function updateStatus(jobId: string, status: AuditProgress['status'
   progressStore.set(jobId, progress);
   
   // Also update in KV if available
-  if (kvClient) {
+  if (useKv && kv) {
     try {
-      await kvClient.set(`audit:progress:${jobId}`, progress, { ex: 3600 });
+      await kv.set(`audit:progress:${jobId}`, JSON.stringify(progress), { ex: 3600 });
     } catch (kvError: any) {
       console.error('⚠️ Failed to update KV:', kvError.message);
     }
@@ -282,10 +298,11 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
   let progress = progressStore.get(jobId);
   
   // If not found and KV is available, try KV
-  if (!progress && kvClient) {
+  if (!progress && useKv && kv) {
     try {
-      const kvProgress = await kvClient.get(`audit:progress:${jobId}`);
-      if (kvProgress) {
+      const kvData = await kv.get(`audit:progress:${jobId}`) as string | null;
+      if (kvData) {
+        const kvProgress = JSON.parse(kvData);
         console.log(`✅ Found progress in KV: ${jobId}`);
         // Also store in memory for faster subsequent access
         progressStore.set(jobId, kvProgress);
@@ -309,8 +326,13 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
 /**
  * Gets all active jobs (for debugging)
  */
-export function getAllJobs(): string[] {
-  return Array.from(progressStore.keys());
+export async function getAllJobs(): Promise<string[]> {
+  if (useKv && kv) {
+    const keys = await kv.keys('audit:*') as string[];
+    return keys.map((key: string) => key.replace('audit:', ''));
+  } else {
+    return Array.from(progressStore.keys());
+  }
 }
 
 /**

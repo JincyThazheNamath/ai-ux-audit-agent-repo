@@ -7,8 +7,8 @@ import { getAllJobs, debugProgressStore, createProgressTracker, getProgress } fr
  */
 export async function GET(request: NextRequest) {
   try {
-    debugProgressStore();
-    const allJobs = getAllJobs();
+    await debugProgressStore();
+    const allJobs = await getAllJobs();
     
     return NextResponse.json({
       success: true,

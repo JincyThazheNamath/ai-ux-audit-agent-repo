@@ -49,17 +49,17 @@ export async function POST(request: NextRequest) {
     const verifyJob = await getProgress(jobId);
     if (!verifyJob) {
       console.error('❌ CRITICAL: Job not found immediately after creation');
-      debugProgressStore();
+      await debugProgressStore();
       return NextResponse.json(
         { error: 'Failed to initialize audit job' },
         { status: 500 }
       );
     }
     
-    console.log('✅ Job created and verified:', jobId);
-    console.log('   Job status:', verifyJob.status);
-    console.log('   Total pages:', verifyJob.totalPages);
-    debugProgressStore();
+          console.log('✅ Job created and verified:', jobId);
+          console.log('   Job status:', verifyJob.status);
+          console.log('   Total pages:', verifyJob.totalPages);
+          await debugProgressStore();
 
     // Start page discovery and audit process in background
     (async () => {
@@ -93,8 +93,8 @@ export async function POST(request: NextRequest) {
         // Save updated progress
         await updateStatus(jobId, 'auditing');
         
-        console.log('✅ Updated job with', actualPageCount, 'pages');
-        debugProgressStore();
+               console.log('✅ Updated job with', actualPageCount, 'pages');
+               await debugProgressStore();
 
         // Step 2: Process pages in batches (or use mock data if enabled)
         
@@ -361,7 +361,7 @@ export async function POST(request: NextRequest) {
     
     if (!verifyProgress) {
       console.error('❌ CRITICAL: Failed to create progress tracker for job:', jobId);
-      debugProgressStore();
+      await debugProgressStore();
       return NextResponse.json(
         { error: 'Failed to initialize audit job' },
         { status: 500 }
@@ -371,7 +371,7 @@ export async function POST(request: NextRequest) {
     console.log('✅ Job ID ready for polling:', jobId);
     console.log('   Final verification - Job status:', verifyProgress.status);
     console.log('   Final verification - Total pages:', verifyProgress.totalPages);
-    debugProgressStore();
+    await debugProgressStore();
 
     // Return job ID immediately with initial progress for client-side caching
     // This helps in serverless environments where in-memory storage may not persist

@@ -74,7 +74,7 @@ export async function GET(
     
     // Debug: Show all jobs in store BEFORE lookup
     console.log('📊 Store state BEFORE lookup:');
-    debugProgressStore();
+    await debugProgressStore();
     
     // Try to get progress with trimmed jobId as well
     let progress = await getProgress(jobId);
@@ -88,7 +88,7 @@ export async function GET(
     }
 
     if (!progress) {
-      const availableJobs = getAllJobs();
+      const availableJobs = await getAllJobs();
       console.log('❌ Job not found in progress tracker');
       console.log('   Requested jobId:', jobId);
       console.log('   Requested jobId type:', typeof jobId);
