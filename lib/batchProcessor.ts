@@ -226,8 +226,8 @@ export async function processBatches(
       }
     }
     
-    // Process results
-    batchResults.forEach((result) => {
+    // Process results (using for...of to support async/await)
+    for (const result of batchResults) {
       if (result.status === 'fulfilled') {
         successful.push(result.value);
         await updatePageProgress(jobId, result.url, 'completed', result.value.summary.overallScore);
@@ -244,7 +244,7 @@ export async function processBatches(
         await updatePageProgress(jobId, result.url, 'failed');
         console.log(`  ❌ ${result.url} - ${errorCategory.type}: ${errorCategory.message}`);
       }
-    });
+    }
     
     // Delay between batches (except last)
     if (i < batches.length - 1) {
