@@ -44,22 +44,61 @@ const progressStore = globalForProgressStore.progressStore;
 // Check if we're in Vercel production environment
 const isVercelProduction = process.env.VERCEL === '1' && process.env.NODE_ENV === 'production';
 
-// Vercel KV client (optional - only if @vercel/kv is installed)
+// Redis/KV client (supports both Vercel KV REST API and Redis Labs connection string)
 let kv: any = null;
 let useKv = false;
+
 try {
-  // Try to import Vercel KV if available (works in both dev and production)
-  const kvModule = require('@vercel/kv');
-  if (kvModule && process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+  // First, try Vercel KV REST API format (preferred)
+  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    const kvModule = require('@vercel/kv');
     kv = kvModule.kv || kvModule.default || kvModule;
     useKv = true;
-    console.log('✅ Vercel KV initialized for persistent storage');
-  } else {
-    console.log('⚠️ Vercel KV env vars not set (KV_REST_API_URL, KV_REST_API_TOKEN)');
+    console.log('✅ Vercel KV initialized (REST API) for persistent storage');
   }
-} catch (e) {
-  // KV not available, will use in-memory fallback
-  console.log('⚠️ Vercel KV not available, using in-memory storage (may not persist in serverless)');
+  // Second, try Redis Labs connection string (REDIS_URL)
+  else if (process.env.REDIS_URL) {
+    // Dynamic import to avoid requiring ioredis if not needed
+    const Redis = require('ioredis');
+    const redis = new Redis(process.env.REDIS_URL, {
+      maxRetriesPerRequest: 3,
+      retryStrategy: (times: number) => {
+        if (times > 3) {
+          return null; // Stop retrying
+        }
+        return Math.min(times * 50, 2000); // Exponential backoff
+      }
+    });
+    
+    // Create a compatible interface that matches @vercel/kv API
+    kv = {
+      async get(key: string) {
+        const result = await redis.get(key);
+        return result;
+      },
+      async set(key: string, value: string, options?: { ex?: number }) {
+        if (options?.ex) {
+          // Redis SETEX: set with expiration in seconds
+          return await redis.setex(key, options.ex, value);
+        }
+        return await redis.set(key, value);
+      },
+      async del(key: string) {
+        return await redis.del(key);
+      },
+      async keys(pattern: string) {
+        return await redis.keys(pattern);
+      }
+    };
+    useKv = true;
+    console.log('✅ Redis Labs connection initialized for persistent storage');
+  } else {
+    console.log('⚠️ Neither KV_REST_API_URL nor REDIS_URL is set');
+    console.log('   Progress tracking will use in-memory storage (may not persist in serverless)');
+  }
+} catch (e: any) {
+  console.log('⚠️ Failed to initialize Redis/KV:', e.message || e);
+  console.log('   Will use in-memory storage (may not persist in serverless)');
 }
 
 // Export store reference for debugging
