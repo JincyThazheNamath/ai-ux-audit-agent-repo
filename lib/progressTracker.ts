@@ -47,58 +47,105 @@ const isVercelProduction = process.env.VERCEL === '1' && process.env.NODE_ENV ==
 // Redis/KV client (supports both Vercel KV REST API and Redis Labs connection string)
 let kv: any = null;
 let useKv = false;
+let kvInitialized = false;
 
-try {
-  // First, try Vercel KV REST API format (preferred)
-  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-    const kvModule = require('@vercel/kv');
-    kv = kvModule.kv || kvModule.default || kvModule;
-    useKv = true;
-    console.log('✅ Vercel KV initialized (REST API) for persistent storage');
+// Lazy initialization function - only called when needed
+async function initializeKv() {
+  if (kvInitialized) {
+    return;
   }
-  // Second, try Redis Labs connection string (REDIS_URL)
-  else if (process.env.REDIS_URL) {
-    // Dynamic import to avoid requiring ioredis if not needed
-    const Redis = require('ioredis');
-    const redis = new Redis(process.env.REDIS_URL, {
-      maxRetriesPerRequest: 3,
-      retryStrategy: (times: number) => {
-        if (times > 3) {
-          return null; // Stop retrying
-        }
-        return Math.min(times * 50, 2000); // Exponential backoff
-      }
-    });
+
+  // Skip initialization during build time or static generation
+  if (typeof window === 'undefined') {
+    // Check if we're in build phase
+    const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build' || 
+                         process.env.NEXT_PHASE === 'phase-development-build' ||
+                         !process.env.RUNTIME;
     
-    // Create a compatible interface that matches @vercel/kv API
-    kv = {
-      async get(key: string) {
-        const result = await redis.get(key);
-        return result;
-      },
-      async set(key: string, value: string, options?: { ex?: number }) {
-        if (options?.ex) {
-          // Redis SETEX: set with expiration in seconds
-          return await redis.setex(key, options.ex, value);
+    if (isBuildPhase) {
+      console.log('⚠️ Skipping KV initialization during build/static generation');
+      kvInitialized = true;
+      return;
+    }
+  }
+
+  try {
+    // First, try Vercel KV REST API format (preferred)
+    if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+      const kvModule = require('@vercel/kv');
+      kv = kvModule.kv || kvModule.default || kvModule;
+      useKv = true;
+      kvInitialized = true;
+      console.log('✅ Vercel KV initialized (REST API) for persistent storage');
+      return;
+    }
+    // Second, try Redis Labs connection string (REDIS_URL)
+    if (process.env.REDIS_URL) {
+      // Lazy import - only when needed and in runtime context
+      const Redis = require('ioredis');
+      const redis = new Redis(process.env.REDIS_URL, {
+        maxRetriesPerRequest: 3,
+        lazyConnect: true, // Don't connect immediately
+        retryStrategy: (times: number) => {
+          if (times > 3) {
+            return null; // Stop retrying
+          }
+          return Math.min(times * 50, 2000); // Exponential backoff
         }
-        return await redis.set(key, value);
-      },
-      async del(key: string) {
-        return await redis.del(key);
-      },
-      async keys(pattern: string) {
-        return await redis.keys(pattern);
+      });
+      
+      // Connect lazily on first use
+      let connected = false;
+      async function ensureConnected() {
+        if (!connected) {
+          try {
+            await redis.connect();
+            connected = true;
+          } catch (err) {
+            console.error('⚠️ Failed to connect to Redis:', err);
+            throw err;
+          }
+        }
       }
-    };
-    useKv = true;
-    console.log('✅ Redis Labs connection initialized for persistent storage');
-  } else {
+      
+      // Create a compatible interface that matches @vercel/kv API
+      kv = {
+        async get(key: string) {
+          await ensureConnected();
+          const result = await redis.get(key);
+          return result;
+        },
+        async set(key: string, value: string, options?: { ex?: number }) {
+          await ensureConnected();
+          if (options?.ex) {
+            // Redis SETEX: set with expiration in seconds
+            return await redis.setex(key, options.ex, value);
+          }
+          return await redis.set(key, value);
+        },
+        async del(key: string) {
+          await ensureConnected();
+          return await redis.del(key);
+        },
+        async keys(pattern: string) {
+          await ensureConnected();
+          return await redis.keys(pattern);
+        }
+      };
+      useKv = true;
+      kvInitialized = true;
+      console.log('✅ Redis Labs connection ready for persistent storage');
+      return;
+    }
+    
     console.log('⚠️ Neither KV_REST_API_URL nor REDIS_URL is set');
     console.log('   Progress tracking will use in-memory storage (may not persist in serverless)');
+    kvInitialized = true;
+  } catch (e: any) {
+    console.log('⚠️ Failed to initialize Redis/KV:', e.message || e);
+    console.log('   Will use in-memory storage (may not persist in serverless)');
+    kvInitialized = true; // Mark as initialized to prevent retries
   }
-} catch (e: any) {
-  console.log('⚠️ Failed to initialize Redis/KV:', e.message || e);
-  console.log('   Will use in-memory storage (may not persist in serverless)');
 }
 
 // Export store reference for debugging
@@ -108,6 +155,9 @@ export function getProgressStoreSize(): number {
 
 // Debug function to log store state
 export async function debugProgressStore(): Promise<void> {
+  // Initialize KV lazily if not already done
+  await initializeKv();
+  
   if (useKv && kv) {
     const allKeys = await kv.keys('audit:*') as string[];
     console.log('📊 Progress Store Debug (KV):');
@@ -198,9 +248,12 @@ export async function updatePageProgress(
   status: 'pending' | 'processing' | 'completed' | 'failed',
   score?: number
 ): Promise<void> {
+  // Initialize KV lazily if not already done
+  await initializeKv();
+  
   // Get progress (checking both memory and KV)
   let progress = progressStore.get(jobId);
-  if (!progress && kv) {
+  if (!progress && useKv && kv) {
     try {
       progress = await kv.get(`audit:progress:${jobId}`);
       if (progress) {
@@ -308,9 +361,12 @@ export async function updatePageProgress(
  * Updates overall status
  */
 export async function updateStatus(jobId: string, status: AuditProgress['status'], currentPage?: string): Promise<void> {
+  // Initialize KV lazily if not already done
+  await initializeKv();
+  
   // Get progress (checking both memory and KV)
   let progress = progressStore.get(jobId);
-  if (!progress && kv) {
+  if (!progress && useKv && kv) {
     try {
       progress = await kv.get(`audit:progress:${jobId}`);
       if (progress) {
@@ -344,6 +400,9 @@ export async function updateStatus(jobId: string, status: AuditProgress['status'
  * Gets current progress
  */
 export async function getProgress(jobId: string): Promise<AuditProgress | null> {
+  // Initialize KV lazily if not already done
+  await initializeKv();
+  
   console.log(`🔍 Getting progress for jobId: ${jobId}`);
   console.log(`🔍 Progress store size: ${progressStore.size}`);
   console.log(`🔍 All jobIds in store: ${Array.from(progressStore.keys()).join(', ')}`);
@@ -381,6 +440,9 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
  * Gets all active jobs (for debugging)
  */
 export async function getAllJobs(): Promise<string[]> {
+  // Initialize KV lazily if not already done
+  await initializeKv();
+  
   if (useKv && kv) {
     const keys = await kv.keys('audit:*') as string[];
     return keys.map((key: string) => key.replace('audit:', ''));
