@@ -111,8 +111,27 @@ export async function GET(
         requestedLength: jobId.length,
       })));
       
-      // If no jobs exist, the job might not have been created yet
+      // If no jobs exist, check if we're in production without KV
+      const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+      const hasKv = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN;
+      
       if (availableJobs.length === 0) {
+        if (isProduction && !hasKv) {
+          return NextResponse.json({ 
+            error: 'Job not found',
+            jobId,
+            message: 'Vercel KV is not configured in production. Progress tracking requires KV to persist across serverless invocations. Please configure Vercel KV (see VERCEL_KV_SETUP.md) or the job may have been created in a different serverless instance.',
+            debug: {
+              reason: 'No jobs found in progress tracker - KV not configured',
+              storeSize: availableJobs.length,
+              extractedJobId: jobId,
+              isProduction,
+              hasKv: false,
+            },
+            fix: 'Configure Vercel KV environment variables (KV_REST_API_URL and KV_REST_API_TOKEN) in your Vercel project settings'
+          }, { status: 404 });
+        }
+        
         return NextResponse.json({ 
           error: 'Job not found',
           jobId,

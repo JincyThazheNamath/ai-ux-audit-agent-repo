@@ -106,23 +106,38 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
     pageResults: [],
   };
   
-  // Store in memory
+  // In serverless environments, KV is required for persistence
+  // If KV is not available, we should still try to store in memory
+  // but warn that it may not persist across invocations
+  
+  // Store in memory (for dev/local)
   progressStore.set(jobId, progress);
   
-  // Also store in KV if available (for serverless persistence)
+  // CRITICAL: Store in KV if available (required for serverless persistence)
   if (useKv && kv) {
     try {
       await kv.set(`audit:progress:${jobId}`, JSON.stringify(progress), { ex: 3600 }); // Expire after 1 hour
       console.log(`📝 Stored progress in KV: ${jobId}`);
     } catch (kvError: any) {
       console.error('⚠️ Failed to store in KV:', kvError.message);
-      // Continue with in-memory storage
+      // Even if KV fails, continue with in-memory storage for dev
+      console.warn('⚠️ Progress will only be available in current instance (not persistent in serverless)');
+    }
+  } else {
+    // Check if we're in production without KV
+    const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+    if (isProduction) {
+      console.error('❌ CRITICAL: Vercel KV not configured in production!');
+      console.error('   Progress will NOT persist across serverless invocations');
+      console.error('   Please set KV_REST_API_URL and KV_REST_API_TOKEN environment variables');
+      console.error('   See VERCEL_KV_SETUP.md for instructions');
     }
   }
   
   console.log(`📝 Created progress tracker: ${jobId}, totalPages: ${totalPages}`);
   console.log(`📝 Progress store size: ${progressStore.size}`);
   console.log(`📝 Store keys: ${Array.from(progressStore.keys()).join(', ')}`);
+  console.log(`📝 KV enabled: ${useKv && kv ? 'YES' : 'NO'}`);
   
   // Verify it was stored
   const stored = progressStore.get(jobId);

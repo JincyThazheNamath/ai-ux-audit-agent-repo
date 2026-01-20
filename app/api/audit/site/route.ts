@@ -46,20 +46,50 @@ export async function POST(request: NextRequest) {
     await updateStatus(jobId, 'discovering');
     
     // Verify job was created and can be retrieved immediately
-    const verifyJob = await getProgress(jobId);
+    // Add retry logic for KV latency in production
+    let verifyJob = await getProgress(jobId);
+    let retryCount = 0;
+    const maxRetries = 5;
+    
+    while (!verifyJob && retryCount < maxRetries) {
+      console.log(`   Retrying getProgress for jobId: ${jobId}, attempt ${retryCount + 1}/${maxRetries}`);
+      await new Promise(resolve => setTimeout(resolve, 200)); // Wait 200ms
+      verifyJob = await getProgress(jobId);
+      retryCount++;
+    }
+    
     if (!verifyJob) {
-      console.error('❌ CRITICAL: Job not found immediately after creation');
+      console.error('❌ CRITICAL: Job not found immediately after creation, even after retries');
       await debugProgressStore();
+      
+      // Check if we're in production without KV
+      const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+      const hasKv = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN;
+      
+      if (isProduction && !hasKv) {
+        return NextResponse.json(
+          { 
+            error: 'Failed to initialize audit job',
+            message: 'Vercel KV is not configured. Progress tracking requires KV in production. See VERCEL_KV_SETUP.md for setup instructions.',
+            jobId
+          },
+          { status: 500 }
+        );
+      }
+      
       return NextResponse.json(
-        { error: 'Failed to initialize audit job' },
+        { 
+          error: 'Failed to initialize audit job',
+          jobId
+        },
         { status: 500 }
       );
     }
     
-          console.log('✅ Job created and verified:', jobId);
-          console.log('   Job status:', verifyJob.status);
-          console.log('   Total pages:', verifyJob.totalPages);
-          await debugProgressStore();
+    console.log('✅ Job created and verified:', jobId);
+    console.log('   Job status:', verifyJob.status);
+    console.log('   Total pages:', verifyJob.totalPages);
+    await debugProgressStore();
 
     // Start page discovery and audit process in background
     (async () => {
