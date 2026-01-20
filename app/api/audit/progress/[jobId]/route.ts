@@ -2,23 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getProgress, formatTimeLeft, getAllJobs, debugProgressStore } from '../../../../../lib/progressTracker';
 
 // Next.js 14 route handler signature
+// In Next.js 14, the signature is: GET(request, { params })
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ jobId: string }> | { jobId: string } }
+  { params }: { params: { jobId: string } }
 ) {
   try {
-    // Extract jobId from params - handle both sync and async params
+    // Extract jobId from params (Next.js 14 uses sync params)
     let jobId: string | null = null;
     
-    // Try to get from params first (Next.js 14 pattern)
+    // Try to get from params first
     try {
-      if (params) {
-        if (params instanceof Promise) {
-          const resolved = await params;
-          jobId = resolved?.jobId || null;
-        } else if (typeof params === 'object' && 'jobId' in params) {
-          jobId = params.jobId;
-        }
+      if (params && typeof params === 'object' && 'jobId' in params) {
+        jobId = params.jobId;
+        console.log('   ✅ Extracted jobId from params:', jobId);
       }
     } catch (err) {
       console.warn('   Failed to extract from params:', err);
@@ -61,6 +58,7 @@ export async function GET(
           pathname: request.nextUrl?.pathname,
           hasParams: !!params,
           paramsType: typeof params,
+          paramsValue: params,
         }
       }, { status: 400 });
     }
