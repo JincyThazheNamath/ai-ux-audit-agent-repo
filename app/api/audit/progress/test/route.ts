@@ -31,9 +31,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const testJobId = 'test-' + Date.now();
-    const progress = createProgressTracker(testJobId, 5);
+    const progress = await createProgressTracker(testJobId, 5);
     
-    const retrieved = getProgress(testJobId);
+    const retrieved = await getProgress(testJobId);
     
     return NextResponse.json({
       success: true,
