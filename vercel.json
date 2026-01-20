@@ -2,6 +2,12 @@
   "functions": {
     "app/api/audit/route.ts": {
       "maxDuration": 60
+    },
+    "app/api/audit/site/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/audit/progress/[jobId]/route.ts": {
+      "maxDuration": 10
     }
   }
 }
