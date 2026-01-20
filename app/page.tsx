@@ -1,12 +1,14 @@
 'use client';
 
 import { useState, useMemo, lazy, Suspense, memo } from 'react';
-import { Search, Loader2, AlertCircle } from 'lucide-react';
+import { Search, Loader2, AlertCircle, Globe, FileText } from 'lucide-react';
 import { generateSampleComMockData, generateDefaultMockData, generateMockResult } from '../lib/mockData';
 import { AuditResult } from '../types/audit';
 import { downloadReportAsHTML, openReportForPrint } from '../components/ReportGenerator';
 import { ViewModeProvider, useViewMode } from '../contexts/ViewModeContext';
 import ViewModeSwitcher from '../components/ViewModeSwitcher';
+import SiteAuditProgress from '../components/SiteAuditProgress';
+import SiteOverview from '../components/SiteOverview';
 
 // Lazy load heavy components to reduce initial bundle size
 const AuditFindingCard = lazy(() => import('../components/AuditFindingCard'));
@@ -16,12 +18,19 @@ const FilterDropdown = lazy(() => import('../components/FilterDropdown'));
 function HomeContent() {
   const { mode } = useViewMode();
   const [url, setUrl] = useState('');
+  const [auditMode, setAuditMode] = useState<'single' | 'full-site'>('single');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AuditResult | null>(null);
   const [error, setError] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [expandedFindings, setExpandedFindings] = useState<Set<number>>(new Set());
+  
+  // Full-site audit state
+  const [siteAuditJobId, setSiteAuditJobId] = useState<string | null>(null);
+  const [siteAuditResult, setSiteAuditResult] = useState<any>(null);
+  const [viewMode, setViewMode] = useState<'overview' | 'page'>('overview');
+  const [selectedPageResult, setSelectedPageResult] = useState<AuditResult | null>(null);
 
   // Mock data generation moved to lib/mockData.ts to prevent recreation on every render
   const generateMockData = (url: string): AuditResult => {
@@ -46,10 +55,16 @@ function HomeContent() {
       return;
     }
 
-    setLoading(true);
     setError('');
-    setResult(null);
     setExpandedFindings(new Set());
+
+    if (auditMode === 'single') {
+      // Single page audit
+      setLoading(true);
+      setResult(null);
+      setSiteAuditJobId(null);
+      setSiteAuditResult(null);
+      setViewMode('overview');
 
     try {
       const response = await fetch('/api/audit', {
@@ -68,6 +83,92 @@ function HomeContent() {
     } catch (err: any) {
       setError(err.message || 'Failed to perform audit');
     } finally {
+      setLoading(false);
+    }
+    } else {
+      // Full-site audit
+      setLoading(true);
+      setResult(null);
+      setSiteAuditResult(null);
+      setViewMode('overview');
+
+      try {
+        const response = await fetch('/api/audit/site', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, maxPages: 40, maxDepth: 3 }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to start full-site audit');
+        }
+
+        setSiteAuditJobId(data.jobId);
+      } catch (err: any) {
+        setError(err.message || 'Failed to start full-site audit');
+        setLoading(false);
+      }
+    }
+  };
+
+  const handleSiteAuditComplete = (result: any) => {
+    setSiteAuditResult(result);
+    setLoading(false);
+    setViewMode('overview');
+  };
+
+  const handleSiteAuditError = (error: string) => {
+    setError(error);
+    setLoading(false);
+    setSiteAuditJobId(null);
+  };
+
+  const handlePageClick = (pageResult: AuditResult) => {
+    setSelectedPageResult(pageResult);
+    setViewMode('page');
+    setResult(pageResult); // Set as current result for single-page view
+  };
+
+  const handleBackToOverview = () => {
+    setViewMode('overview');
+    setSelectedPageResult(null);
+    setResult(null);
+  };
+
+  const handleRetryFailedPages = async (urls: string[]) => {
+    if (urls.length === 0) return;
+    
+    setLoading(true);
+    setError('');
+    
+    try {
+      // Create a new audit job for the failed URLs
+      // We'll audit them as a "mini" full-site audit
+      const baseUrl = urls[0]; // Use first URL as base
+      
+      const response = await fetch('/api/audit/site', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          url: baseUrl, 
+          maxPages: urls.length, 
+          maxDepth: 1,
+          retryUrls: urls, // Pass specific URLs to retry
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to retry failed pages');
+      }
+
+      setSiteAuditJobId(data.jobId);
+      setViewMode('overview');
+    } catch (err: any) {
+      setError(err.message || 'Failed to retry failed pages');
       setLoading(false);
     }
   };
@@ -153,22 +254,58 @@ Report ID: ${result.timestamp}
   return (
     <div className="min-h-screen bg-[#0a1628] overflow-x-hidden flex flex-col sm:!block">
         <div className="container mx-auto px-4 py-8 max-w-7xl flex-1 sm:!flex-none flex flex-col sm:!block">
-          {/* Header */}
+        {/* Header */}
           <div className="text-center mb-6 sm:mb-8 md:mb-12">
             <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-3 sm:mb-4">
-              AI UX Audit Agent
-            </h1>
+            AI UX Audit Agent
+          </h1>
             <div className="flex items-center justify-center gap-4 mb-4">
               <ViewModeSwitcher />
             </div>
             <p className="text-sm sm:text-base md:text-lg text-gray-300 max-w-2xl mx-auto px-4">
-              Automated UX analysis powered by AI. Get instant insights on accessibility, 
-              usability, design consistency, and more.
-            </p>
-          </div>
+            Automated UX analysis powered by AI. Get instant insights on accessibility, 
+            usability, design consistency, and more.
+          </p>
+        </div>
 
         {/* Input Section */}
         <div className="bg-[#1a2332] rounded-2xl shadow-xl p-4 sm:p-6 md:p-8 mb-6 sm:mb-8 border border-gray-700/50">
+          {/* Audit Mode Selector */}
+          <div className="flex gap-2 mb-4 p-1 bg-[#0a1628] rounded-lg">
+            <button
+              onClick={() => {
+                setAuditMode('single');
+                setResult(null);
+                setSiteAuditJobId(null);
+                setSiteAuditResult(null);
+              }}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md transition-colors ${
+                auditMode === 'single'
+                  ? 'bg-teal-600 text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <FileText size={18} />
+              <span className="text-sm font-medium">Single Page</span>
+            </button>
+            <button
+              onClick={() => {
+                setAuditMode('full-site');
+                setResult(null);
+                setSiteAuditJobId(null);
+                setSiteAuditResult(null);
+              }}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md transition-colors ${
+                auditMode === 'full-site'
+                  ? 'bg-teal-600 text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Globe size={18} />
+              <span className="text-sm font-medium">Full Site</span>
+            </button>
+          </div>
+
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
               <input
@@ -176,7 +313,7 @@ Report ID: ${result.timestamp}
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && !loading && handleAudit()}
-                placeholder="Enter website URL"
+                placeholder={auditMode === 'single' ? 'Enter website URL' : 'Enter website URL (up to 40 pages)'}
                 className="w-full px-4 sm:px-6 py-3 sm:py-4 text-[16px] sm:text-lg bg-[#0a1628] border-2 border-gray-600 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
                 style={{ fontSize: '16px' }}
                 disabled={loading}
@@ -195,7 +332,9 @@ Report ID: ${result.timestamp}
               ) : (
                 <>
                   <Search size={20} />
-                  <span className="text-sm sm:text-base">Audit Website</span>
+                  <span className="text-sm sm:text-base">
+                    {auditMode === 'single' ? 'Audit Page' : 'Audit Full Site'}
+                  </span>
                 </>
               )}
             </button>
@@ -208,9 +347,39 @@ Report ID: ${result.timestamp}
           )}
         </div>
 
-        {/* Results */}
-        {result && (
+        {/* Full-Site Audit Progress */}
+        {siteAuditJobId && !siteAuditResult && (
+          <SiteAuditProgress
+            jobId={siteAuditJobId}
+            onComplete={handleSiteAuditComplete}
+            onError={handleSiteAuditError}
+          />
+        )}
+
+        {/* Full-Site Audit Results */}
+        {siteAuditResult && viewMode === 'overview' && (
           <div className="space-y-6">
+            <SiteOverview
+              aggregatedResult={siteAuditResult.aggregated}
+              sortedPages={siteAuditResult.sortedPages}
+              failedPages={siteAuditResult.failedPages || []}
+              onPageClick={handlePageClick}
+              onRetryFailedPages={handleRetryFailedPages}
+            />
+          </div>
+        )}
+
+        {/* Single Page Results or Selected Page from Full-Site */}
+        {result && (auditMode === 'single' || viewMode === 'page') && (
+          <div className="space-y-6">
+            {viewMode === 'page' && (
+              <button
+                onClick={handleBackToOverview}
+                className="text-teal-400 hover:text-teal-300 text-sm flex items-center gap-2 mb-4"
+              >
+                ← Back to Site Overview
+              </button>
+            )}
             {/* Summary Card */}
             <Suspense fallback={<div className="bg-[#1a2332] rounded-2xl p-8 animate-pulse">Loading summary...</div>}>
               <SummaryCard
@@ -268,12 +437,12 @@ Report ID: ${result.timestamp}
           </div>
         )}
 
-          {/* Footer */}
+        {/* Footer */}
           <div className="text-center mt-8 sm:mt-12 pt-8 sm:pt-0 text-gray-400 flex-shrink-0 sm:!flex-none">
             <p className="text-xs sm:text-base">Powered by AI • Built for Lunim Studio</p>
-          </div>
         </div>
       </div>
+    </div>
   );
 }
 

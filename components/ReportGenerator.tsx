@@ -713,5 +713,354 @@ export function openReportForPrint(result: AuditResult, mode: ViewMode = 'profes
   }
 }
 
+/**
+ * Generates a full-site audit report
+ * @param aggregatedResult - The aggregated audit result
+ * @param sortedPages - Pages sorted by severity
+ * @param failedPages - Array of failed pages (optional)
+ * @param mode - The view mode ('professional' or 'business')
+ */
+export function generateFullSiteReport(
+  aggregatedResult: any,
+  sortedPages: any[],
+  failedPages: any[] = [],
+  mode: ViewMode = 'professional'
+): string {
+  const isBusinessMode = mode === 'business';
+  
+  const getSeverityColor = (severity: string) => {
+    switch (severity) {
+      case 'critical': return '#dc2626';
+      case 'high': return '#ea580c';
+      case 'medium': return '#ca8a04';
+      case 'low': return '#16a34a';
+      default: return '#6b7280';
+    }
+  };
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return '#16a34a';
+    if (score >= 60) return '#ca8a04';
+    if (score >= 40) return '#ea580c';
+    return '#dc2626';
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const htmlReport = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${isBusinessMode ? 'Full-Site Web Quality Audit Report' : 'Full-Site UX Audit Report'} - ${aggregatedResult.baseUrl}</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #1f2937;
+      background: #ffffff;
+      padding: 40px 20px;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: #ffffff;
+    }
+    
+    .header {
+      border-bottom: 4px solid #14b8a6;
+      padding-bottom: 30px;
+      margin-bottom: 40px;
+    }
+    
+    .header h1 {
+      font-size: 36px;
+      font-weight: 700;
+      color: #0a1628;
+      margin-bottom: 10px;
+    }
+    
+    .header-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 30px;
+      margin-top: 20px;
+      font-size: 14px;
+      color: #6b7280;
+    }
+    
+    .section {
+      margin-bottom: 50px;
+      page-break-inside: avoid;
+    }
+    
+    .section-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: #0a1628;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    
+    .score-card {
+      background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    
+    .score-value {
+      font-size: 64px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    
+    .metric-card {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+    }
+    
+    .metric-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #0a1628;
+      margin-bottom: 5px;
+    }
+    
+    .metric-label {
+      font-size: 14px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 30px;
+      background: white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    thead {
+      background: #0a1628;
+      color: white;
+    }
+    
+    th {
+      padding: 15px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    td {
+      padding: 15px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    
+    tr:hover {
+      background: #f9fafb;
+    }
+    
+    .page-score {
+      font-weight: 700;
+      font-size: 18px;
+    }
+    
+    .failed-page {
+      background: #fef2f2;
+      border-left: 4px solid #dc2626;
+    }
+    
+    .footer {
+      margin-top: 60px;
+      padding-top: 30px;
+      border-top: 2px solid #e5e7eb;
+      text-align: center;
+      color: #6b7280;
+      font-size: 12px;
+    }
+    
+    @media print {
+      body {
+        padding: 20px;
+      }
+      
+      .section {
+        page-break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1>${isBusinessMode ? 'Full-Site Web Quality Audit Report' : 'Full-Site UX Audit Report'}</h1>
+      <div class="header-meta">
+        <div><strong>Website:</strong> ${aggregatedResult.baseUrl}</div>
+        <div><strong>Audit Date:</strong> ${formatDate(aggregatedResult.timestamp)}</div>
+        <div><strong>Total Pages:</strong> ${aggregatedResult.aggregatedSummary.totalPages}</div>
+        ${failedPages.length > 0 ? `<div><strong>Failed Pages:</strong> ${failedPages.length}</div>` : ''}
+      </div>
+    </div>
+
+    <!-- Site-Wide Summary -->
+    <div class="section">
+      <h2 class="section-title">Site-Wide Summary</h2>
+      <div class="score-card">
+        <div class="score-value">${aggregatedResult.aggregatedSummary.overallScore}</div>
+        <div class="score-label">Overall Site Quality Score</div>
+        <div style="margin-top: 15px; opacity: 0.9;">Average Score: ${aggregatedResult.aggregatedSummary.averageScore}</div>
+      </div>
+      
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-value" style="color: #dc2626;">${aggregatedResult.aggregatedSummary.critical}</div>
+          <div class="metric-label">Critical Issues</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value" style="color: #ea580c;">${aggregatedResult.aggregatedSummary.high}</div>
+          <div class="metric-label">High Priority</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value" style="color: #ca8a04;">${aggregatedResult.aggregatedSummary.medium}</div>
+          <div class="metric-label">Medium Priority</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value" style="color: #16a34a;">${aggregatedResult.aggregatedSummary.low}</div>
+          <div class="metric-label">Low Priority</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">${aggregatedResult.aggregatedSummary.totalIssues}</div>
+          <div class="metric-label">Total Issues</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pages by Severity -->
+    <div class="section">
+      <h2 class="section-title">Pages by Severity (Worst First)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Page URL</th>
+            <th>Score</th>
+            <th>Critical</th>
+            <th>High</th>
+            <th>Total Issues</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sortedPages.map((page, index) => `
+            <tr>
+              <td>#${index + 1}</td>
+              <td>${page.url}</td>
+              <td class="page-score" style="color: ${getScoreColor(page.score)};">${page.score}</td>
+              <td>${page.criticalCount}</td>
+              <td>${page.highCount}</td>
+              <td>${page.totalIssues}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    ${failedPages.length > 0 ? `
+    <!-- Failed Pages -->
+    <div class="section">
+      <h2 class="section-title">Failed Pages</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Page URL</th>
+            <th>Error Type</th>
+            <th>Error Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${failedPages.map(page => `
+            <tr class="failed-page">
+              <td>${page.url}</td>
+              <td>${page.errorType}</td>
+              <td>${page.error}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+
+    <!-- Footer -->
+    <div class="footer">
+      <p><strong>Generated by AI UX Audit Agent</strong></p>
+      <p>Report ID: ${aggregatedResult.timestamp} | Audit Date: ${formatDate(aggregatedResult.timestamp)}</p>
+      <p style="margin-top: 10px;">This report is suitable for printing, PDF export, and sharing with stakeholders.</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+
+  return htmlReport;
+}
+
+/**
+ * Downloads the full-site audit report as HTML file
+ */
+export function downloadFullSiteReportAsHTML(
+  aggregatedResult: any,
+  sortedPages: any[],
+  failedPages: any[] = [],
+  mode: ViewMode = 'professional'
+) {
+  const htmlReport = generateFullSiteReport(aggregatedResult, sortedPages, failedPages, mode);
+  const blob = new Blob([htmlReport], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const modeSuffix = mode === 'business' ? '-business' : '-professional';
+  const baseUrl = aggregatedResult.baseUrl.replace(/https?:\/\//, '').replace(/\//g, '-');
+  a.href = url;
+  a.download = `full-site-audit-report${modeSuffix}-${baseUrl}-${Date.now()}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 
 
