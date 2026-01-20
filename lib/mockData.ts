@@ -457,3 +457,50 @@ export const generateMockResult = (url: string, mockFindings: AuditFinding[]): A
     screenshot: placeholderScreenshot,
   };
 };
+
+/**
+ * Generates mock pages for full-site audit
+ */
+export function generateMockPages(baseUrl: string, count: number = 10): string[] {
+  const normalizedUrl = baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`;
+  const urlObj = new URL(normalizedUrl);
+  const pages: string[] = [normalizedUrl]; // Homepage
+  
+  const pagePaths = [
+    '/about',
+    '/contact',
+    '/services',
+    '/products',
+    '/blog',
+    '/pricing',
+    '/faq',
+    '/team',
+    '/careers',
+    '/portfolio',
+    '/testimonials',
+    '/case-studies',
+    '/resources',
+    '/support',
+    '/documentation',
+  ];
+  
+  for (let i = 1; i < count && i <= pagePaths.length; i++) {
+    pages.push(`${urlObj.protocol}//${urlObj.host}${pagePaths[i - 1]}`);
+  }
+  
+  return pages.slice(0, count);
+}
+
+/**
+ * Generates mock audit result for a page URL
+ */
+export function generateMockAuditForPage(pageUrl: string): AuditResult {
+  const urlLower = pageUrl.toLowerCase();
+  
+  // Use sample.com mock data if URL contains sample.com
+  const mockFindings = urlLower.includes('sample.com') 
+    ? generateSampleComMockData()
+    : generateDefaultMockData();
+  
+  return generateMockResult(pageUrl, mockFindings);
+}
