@@ -64,14 +64,21 @@ export async function POST(request: NextRequest) {
       
       // Check if we're in production without KV
       const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
-      const hasKv = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN;
+      const hasVercelKv = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN;
+      const hasRedisUrl = process.env.REDIS_URL;
+      const hasKv = hasVercelKv || hasRedisUrl;
       
       if (isProduction && !hasKv) {
         return NextResponse.json(
           { 
             error: 'Failed to initialize audit job',
-            message: 'Vercel KV is not configured. Progress tracking requires KV in production. See VERCEL_KV_SETUP.md for setup instructions.',
-            jobId
+            message: 'Redis/KV is not configured. Progress tracking requires Redis or KV in production. Set REDIS_URL (for Redis Labs) or KV_REST_API_URL + KV_REST_API_TOKEN (for Vercel KV). See VERCEL_KV_SETUP.md for setup instructions.',
+            jobId,
+            debug: {
+              hasVercelKv: !!hasVercelKv,
+              hasRedisUrl: !!hasRedisUrl,
+              hasKv: false,
+            }
           },
           { status: 500 }
         );
