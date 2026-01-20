@@ -79,13 +79,13 @@ export async function GET(
     debugProgressStore();
     
     // Try to get progress with trimmed jobId as well
-    let progress = getProgress(jobId);
+    let progress = await getProgress(jobId);
     if (!progress) {
       // Try with trimmed version
       const trimmedJobId = jobId.trim();
       if (trimmedJobId !== jobId) {
         console.log(`   Trying with trimmed jobId: "${trimmedJobId}"`);
-        progress = getProgress(trimmedJobId);
+        progress = await getProgress(trimmedJobId);
       }
     }
 

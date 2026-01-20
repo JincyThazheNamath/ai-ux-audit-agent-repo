@@ -38,15 +38,15 @@ export async function POST(request: NextRequest) {
 
     // Initialize progress tracker immediately (before async operation)
     // This ensures the job exists for polling even before discovery starts
-    const initialProgress = createProgressTracker(jobId, 1); // Temporary, will be updated
+    const initialProgress = await createProgressTracker(jobId, 1); // Temporary, will be updated
     initialProgress.pageResults = [{
       url: targetUrl.toString(),
       status: 'pending' as const,
     }];
-    updateStatus(jobId, 'discovering');
+    await updateStatus(jobId, 'discovering');
     
     // Verify job was created and can be retrieved immediately
-    const verifyJob = getProgress(jobId);
+    const verifyJob = await getProgress(jobId);
     if (!verifyJob) {
       console.error('❌ CRITICAL: Job not found immediately after creation');
       debugProgressStore();
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
         console.log(`✅ Discovered ${actualPageCount} pages`);
         
         // Update progress tracker with discovered pages
-        const progress = getProgress(jobId);
+        const progress = await getProgress(jobId);
         if (!progress) {
           console.error('❌ CRITICAL: Job not found after discovery');
           return;
@@ -90,11 +90,13 @@ export async function POST(request: NextRequest) {
           status: 'pending' as const,
         }));
         
+        // Save updated progress
+        await updateStatus(jobId, 'auditing');
+        
         console.log('✅ Updated job with', actualPageCount, 'pages');
         debugProgressStore();
 
         // Step 2: Process pages in batches (or use mock data if enabled)
-        updateStatus(jobId, 'auditing');
         
         let successful: any[] = [];
         let failed: FailedPage[] = [];
@@ -105,12 +107,12 @@ export async function POST(request: NextRequest) {
           
           for (let i = 0; i < mockPages.length; i++) {
             const pageUrl = mockPages[i];
-            updatePageProgress(jobId, pageUrl, 'processing');
+            await updatePageProgress(jobId, pageUrl, 'processing');
             await new Promise(resolve => setTimeout(resolve, 500));
             
             const mockResult = generateMockAuditForPage(pageUrl);
             successful.push(mockResult);
-            updatePageProgress(jobId, pageUrl, 'completed', mockResult.summary.overallScore);
+            await updatePageProgress(jobId, pageUrl, 'completed', mockResult.summary.overallScore);
           }
         } else {
           console.log(`🔄 Starting batch processing for ${actualPageCount} pages...`);
@@ -137,13 +139,13 @@ export async function POST(request: NextRequest) {
             console.error('Error stack:', batchError?.stack);
             
             // Mark all pending pages as failed
-            const progress = getProgress(jobId);
+            const progress = await getProgress(jobId);
             if (progress) {
-              progress.pageResults.forEach(page => {
+              for (const page of progress.pageResults) {
                 if (page.status === 'pending' || page.status === 'processing') {
-                  updatePageProgress(jobId, page.url, 'failed');
+                  await updatePageProgress(jobId, page.url, 'failed');
                 }
-              });
+              }
             }
             
             // If no successful audits, we'll fall back to mock data below
@@ -178,9 +180,9 @@ export async function POST(request: NextRequest) {
           if (hasRetryableErrors && actualPageCount <= 5) {
             // If few pages and retryable errors, suggest retry
             console.log('⚠️ Retryable errors detected. Consider retrying with fewer pages.');
-            updateStatus(jobId, 'failed');
+            await updateStatus(jobId, 'failed');
             
-            const finalProgress = getProgress(jobId);
+            const finalProgress = await getProgress(jobId);
             if (finalProgress) {
               (finalProgress as any).finalResult = {
                 error: 'All audits failed with retryable errors',
@@ -212,21 +214,21 @@ export async function POST(request: NextRequest) {
           
           for (let i = 0; i < mockPages.length; i++) {
             const pageUrl = mockPages[i];
-            updatePageProgress(jobId, pageUrl, 'processing');
+            await updatePageProgress(jobId, pageUrl, 'processing');
             
             // Simulate processing with realistic timing
             await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
             
             const mockResult = generateMockAuditForPage(pageUrl);
             mockResults.push(mockResult);
-            updatePageProgress(jobId, pageUrl, 'completed', mockResult.summary.overallScore);
+            await updatePageProgress(jobId, pageUrl, 'completed', mockResult.summary.overallScore);
           }
           
           // Use mock results for aggregation
           const aggregated = aggregateAuditResults(mockResults, targetUrl.toString());
           const sortedPages = sortPagesBySeverity(mockResults);
           
-          const finalProgress = getProgress(jobId);
+          const finalProgress = await getProgress(jobId);
           if (finalProgress) {
             (finalProgress as any).finalResult = {
               aggregated,
@@ -242,9 +244,11 @@ export async function POST(request: NextRequest) {
               isMockData: true, // Flag to indicate mock data was used
               fallbackReason: 'All real audits failed, using mock data for demonstration',
             };
+            // Save the final result back
+            await updateStatus(jobId, 'completed');
+          } else {
+            await updateStatus(jobId, 'completed');
           }
-          
-          updateStatus(jobId, 'completed');
           console.log(`✅ Full-site audit completed with mock data: ${mockResults.length} pages`);
           return;
         }
@@ -289,14 +293,14 @@ export async function POST(request: NextRequest) {
         }
 
         // Step 3: Aggregate results
-        updateStatus(jobId, 'aggregating');
+        await updateStatus(jobId, 'aggregating');
         console.log(`📊 Aggregating results from ${successful.length} successful audits...`);
         
         const aggregated = aggregateAuditResults(successful, targetUrl.toString());
         const sortedPages = sortPagesBySeverity(successful);
 
         // Store final result
-        const finalProgress = getProgress(jobId);
+        const finalProgress = await getProgress(jobId);
         if (finalProgress) {
           (finalProgress as any).finalResult = {
             aggregated,
@@ -305,20 +309,19 @@ export async function POST(request: NextRequest) {
             failedPages: failed.map(f => ({ url: f.url, error: f.error, errorType: f.errorType, retryable: f.retryable })),
             isMockData: forceMockData || false,
           };
+          // Save the final result back
+          await updateStatus(jobId, 'completed');
+        } else {
+          await updateStatus(jobId, 'completed');
         }
-
-        // Update status: completed
-        updateStatus(jobId, 'completed');
         console.log(`✅ Full-site audit completed: ${successful.length} successful, ${failed.length} failed`);
       } catch (error: any) {
         console.error('❌ Full-site audit error:', error);
         console.error('Error stack:', error.stack);
         
         // Update status to failed
-        const finalProgress = getProgress(jobId);
+        const finalProgress = await getProgress(jobId);
         if (finalProgress) {
-          updateStatus(jobId, 'failed');
-          
           // Store error information
           (finalProgress as any).finalResult = {
             error: error.message || 'Unknown error occurred',
@@ -334,12 +337,13 @@ export async function POST(request: NextRequest) {
             pageResults: [],
             isMockData: false,
           };
+          await updateStatus(jobId, 'failed');
         }
       }
     })();
 
     // Verify job exists before returning (with multiple attempts)
-    let verifyProgress = getProgress(jobId);
+    let verifyProgress = await getProgress(jobId);
     let verifyAttempts = 0;
     const maxVerifyAttempts = 5;
     
@@ -347,7 +351,7 @@ export async function POST(request: NextRequest) {
       verifyAttempts++;
       console.log(`   Verification attempt ${verifyAttempts}/${maxVerifyAttempts}...`);
       await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
-      verifyProgress = getProgress(jobId);
+      verifyProgress = await getProgress(jobId);
       
       if (verifyProgress) {
         console.log(`   ✅ Job verified on attempt ${verifyAttempts}`);
@@ -369,11 +373,18 @@ export async function POST(request: NextRequest) {
     console.log('   Final verification - Total pages:', verifyProgress.totalPages);
     debugProgressStore();
 
-    // Return job ID immediately
+    // Return job ID immediately with initial progress for client-side caching
+    // This helps in serverless environments where in-memory storage may not persist
     return NextResponse.json({
       jobId,
       status: 'started',
       message: 'Full-site audit started. Use the jobId to check progress.',
+      initialProgress: {
+        status: verifyProgress.status,
+        totalPages: verifyProgress.totalPages,
+        completedPages: verifyProgress.completedPages,
+        percentage: verifyProgress.percentage,
+      },
     });
   } catch (error: any) {
     console.error('Audit error:', error);

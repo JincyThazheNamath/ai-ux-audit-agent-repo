@@ -135,8 +135,8 @@ async function auditSinglePageWithRetry(
   for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
     try {
       // Update progress to processing
-      updatePageProgress(jobId, url, 'processing');
-      updateStatus(jobId, 'auditing', url);
+      await updatePageProgress(jobId, url, 'processing');
+      await updateStatus(jobId, 'auditing', url);
       
       // Create timeout promise
       const timeoutPromise = new Promise<AuditResult>((_, reject) => 
@@ -173,7 +173,7 @@ async function auditSinglePageWithRetry(
         await delay(backoffDelay);
       } else {
         // Mark as failed after all retries
-        updatePageProgress(jobId, url, 'failed');
+        await updatePageProgress(jobId, url, 'failed');
         console.error(`   ❌ All retries exhausted for ${url}`);
       }
     }
@@ -204,7 +204,7 @@ export async function processBatches(
     const batchNumber = i + 1;
     
     console.log(`\n🔄 Processing batch ${batchNumber}/${batches.length} (${batch.length} pages)`);
-    updateStatus(jobId, 'auditing', `Batch ${batchNumber}/${batches.length}`);
+    await updateStatus(jobId, 'auditing', `Batch ${batchNumber}/${batches.length}`);
     
     // Process batch sequentially to avoid browser conflicts and rate limits
     // Sequential processing is more reliable than parallel for browser automation
@@ -230,7 +230,7 @@ export async function processBatches(
     batchResults.forEach((result) => {
       if (result.status === 'fulfilled') {
         successful.push(result.value);
-        updatePageProgress(jobId, result.url, 'completed', result.value.summary.overallScore);
+        await updatePageProgress(jobId, result.url, 'completed', result.value.summary.overallScore);
         console.log(`  ✅ ${result.url} - Score: ${result.value.summary.overallScore}`);
       } else {
         const errorCategory = (result.reason as any)?.category || categorizeError(result.reason);
@@ -241,7 +241,7 @@ export async function processBatches(
           retryable: errorCategory.retryable,
         };
         failed.push(failedPage);
-        updatePageProgress(jobId, result.url, 'failed');
+        await updatePageProgress(jobId, result.url, 'failed');
         console.log(`  ❌ ${result.url} - ${errorCategory.type}: ${errorCategory.message}`);
       }
     });

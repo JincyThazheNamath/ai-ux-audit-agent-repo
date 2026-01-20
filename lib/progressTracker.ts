@@ -41,6 +41,25 @@ if (!globalForProgressStore.progressStore) {
 
 const progressStore = globalForProgressStore.progressStore;
 
+// Check if we're in Vercel production environment
+const isVercelProduction = process.env.VERCEL === '1' && process.env.NODE_ENV === 'production';
+
+// Vercel KV client (optional - only if @vercel/kv is installed)
+let kvClient: any = null;
+try {
+  // Try to import Vercel KV if available (works in both dev and production)
+  const kv = require('@vercel/kv');
+  if (kv && process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    kvClient = kv.kv || kv.default || kv;
+    console.log('✅ Vercel KV initialized for persistent storage');
+  } else {
+    console.log('⚠️ Vercel KV env vars not set (KV_REST_API_URL, KV_REST_API_TOKEN)');
+  }
+} catch (e) {
+  // KV not available, will use in-memory fallback
+  console.log('⚠️ Vercel KV not available, using in-memory storage (may not persist in serverless)');
+}
+
 // Export store reference for debugging
 export function getProgressStoreSize(): number {
   return progressStore.size;
@@ -59,7 +78,7 @@ export function debugProgressStore(): void {
 /**
  * Creates a new progress tracker
  */
-export function createProgressTracker(jobId: string, totalPages: number): AuditProgress {
+export async function createProgressTracker(jobId: string, totalPages: number): Promise<AuditProgress> {
   const progress: AuditProgress = {
     jobId,
     status: 'discovering',
@@ -71,7 +90,20 @@ export function createProgressTracker(jobId: string, totalPages: number): AuditP
     pageResults: [],
   };
   
+  // Store in memory
   progressStore.set(jobId, progress);
+  
+  // Also store in KV if available (for serverless persistence)
+  if (kvClient) {
+    try {
+      await kvClient.set(`audit:progress:${jobId}`, progress, { ex: 3600 }); // Expire after 1 hour
+      console.log(`📝 Stored progress in KV: ${jobId}`);
+    } catch (kvError: any) {
+      console.error('⚠️ Failed to store in KV:', kvError.message);
+      // Continue with in-memory storage
+    }
+  }
+  
   console.log(`📝 Created progress tracker: ${jobId}, totalPages: ${totalPages}`);
   console.log(`📝 Progress store size: ${progressStore.size}`);
   console.log(`📝 Store keys: ${Array.from(progressStore.keys()).join(', ')}`);
@@ -90,13 +122,24 @@ export function createProgressTracker(jobId: string, totalPages: number): AuditP
 /**
  * Updates progress for a specific page
  */
-export function updatePageProgress(
+export async function updatePageProgress(
   jobId: string,
   pageUrl: string,
   status: 'pending' | 'processing' | 'completed' | 'failed',
   score?: number
-): void {
-  const progress = progressStore.get(jobId);
+): Promise<void> {
+  // Get progress (checking both memory and KV)
+  let progress = progressStore.get(jobId);
+  if (!progress && kvClient) {
+    try {
+      progress = await kvClient.get(`audit:progress:${jobId}`);
+      if (progress) {
+        progressStore.set(jobId, progress);
+      }
+    } catch (e) {
+      // Ignore KV errors
+    }
+  }
   if (!progress) return;
   
   const pageIndex = progress.pageResults.findIndex(p => p.url === pageUrl);
@@ -194,8 +237,19 @@ export function updatePageProgress(
 /**
  * Updates overall status
  */
-export function updateStatus(jobId: string, status: AuditProgress['status'], currentPage?: string): void {
-  const progress = progressStore.get(jobId);
+export async function updateStatus(jobId: string, status: AuditProgress['status'], currentPage?: string): Promise<void> {
+  // Get progress (checking both memory and KV)
+  let progress = progressStore.get(jobId);
+  if (!progress && kvClient) {
+    try {
+      progress = await kvClient.get(`audit:progress:${jobId}`);
+      if (progress) {
+        progressStore.set(jobId, progress);
+      }
+    } catch (e) {
+      // Ignore KV errors
+    }
+  }
   if (!progress) return;
   
   progress.status = status;
@@ -203,18 +257,45 @@ export function updateStatus(jobId: string, status: AuditProgress['status'], cur
     progress.currentPage = currentPage;
   }
   
+  // Update in memory
   progressStore.set(jobId, progress);
+  
+  // Also update in KV if available
+  if (kvClient) {
+    try {
+      await kvClient.set(`audit:progress:${jobId}`, progress, { ex: 3600 });
+    } catch (kvError: any) {
+      console.error('⚠️ Failed to update KV:', kvError.message);
+    }
+  }
 }
 
 /**
  * Gets current progress
  */
-export function getProgress(jobId: string): AuditProgress | null {
+export async function getProgress(jobId: string): Promise<AuditProgress | null> {
   console.log(`🔍 Getting progress for jobId: ${jobId}`);
   console.log(`🔍 Progress store size: ${progressStore.size}`);
   console.log(`🔍 All jobIds in store: ${Array.from(progressStore.keys()).join(', ')}`);
   
-  const progress = progressStore.get(jobId);
+  // Try in-memory first
+  let progress = progressStore.get(jobId);
+  
+  // If not found and KV is available, try KV
+  if (!progress && kvClient) {
+    try {
+      const kvProgress = await kvClient.get(`audit:progress:${jobId}`);
+      if (kvProgress) {
+        console.log(`✅ Found progress in KV: ${jobId}`);
+        // Also store in memory for faster subsequent access
+        progressStore.set(jobId, kvProgress);
+        progress = kvProgress;
+      }
+    } catch (kvError: any) {
+      console.error('⚠️ Failed to get from KV:', kvError.message);
+    }
+  }
+  
   if (!progress) {
     console.log(`❌ Progress not found for jobId: ${jobId}`);
     console.log(`   Available jobIds: ${Array.from(progressStore.keys()).join(', ')}`);
