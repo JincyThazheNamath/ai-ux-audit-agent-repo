@@ -87,21 +87,26 @@ async function initializeKv() {
       try {
         // Suppress Node.js deprecation warning for url.parse() used by ioredis
         // This is a known issue with ioredis v5.x - it will be fixed in future versions
+        // We suppress it by intercepting the warning
         const originalEmitWarning = process.emitWarning;
-        process.emitWarning = function(warning: any, ...args: any[]) {
+        // @ts-expect-error - TypeScript doesn't like overriding emitWarning signature, but it works at runtime
+        process.emitWarning = function(warning: any, typeOrOptions?: any, code?: string, ctor?: Function) {
           // Suppress DEP0169 deprecation warning about url.parse()
-          if (typeof warning === 'object' && warning?.name === 'DeprecationWarning') {
-            if (warning.message && warning.message.includes('url.parse()')) {
-              return; // Suppress this specific warning
-            }
-            if (warning.code === 'DEP0169') {
-              return; // Suppress DEP0169 (url.parse deprecation)
-            }
+          const warningStr = typeof warning === 'string' ? warning : warning?.message || '';
+          const warningCode = typeof warning === 'object' ? warning?.code : code;
+          
+          if (warningCode === 'DEP0169' || warningStr.includes('url.parse()')) {
+            return; // Suppress this specific warning
           }
-          if (typeof warning === 'string' && warning.includes('url.parse()')) {
-            return; // Suppress url.parse() deprecation warning
+          
+          // Call original with proper arguments
+          if (typeof typeOrOptions === 'object' && typeOrOptions !== null) {
+            return (originalEmitWarning as any).call(process, warning, typeOrOptions);
+          } else if (typeof typeOrOptions === 'string') {
+            return (originalEmitWarning as any).call(process, warning, typeOrOptions, code, ctor);
+          } else {
+            return (originalEmitWarning as any).call(process, warning);
           }
-          return originalEmitWarning.apply(process, [warning, ...args]);
         };
         
         // Lazy import - only when needed and in runtime context
