@@ -161,7 +161,7 @@ export async function auditSinglePage(url: string): Promise<AuditResult> {
       try {
         await page.goto(targetUrl.toString(), { 
           waitUntil: 'networkidle2',
-          timeout: 45000 // 45 seconds for networkidle
+          timeout: 60000 // 60 seconds for networkidle (increased for 10-minute window)
         });
         console.log(`  ✅ Page loaded successfully (networkidle2)`);
       } catch (networkIdleError: any) {
@@ -169,7 +169,7 @@ export async function auditSinglePage(url: string): Promise<AuditResult> {
         console.log(`  ⚠️ networkidle2 timeout, trying domcontentloaded...`);
         await page.goto(targetUrl.toString(), { 
           waitUntil: 'domcontentloaded',
-          timeout: 30000 
+          timeout: 45000 // 45 seconds (increased for 10-minute window)
         });
         // Wait a bit for dynamic content
         await page.waitForTimeout(2000);

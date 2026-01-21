@@ -30,7 +30,7 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
   const [retryCount, setRetryCount] = useState(0);
   const [startTime] = useState(Date.now());
   const MAX_RETRIES = 10; // Max retries for 404 errors
-  const MAX_WAIT_TIME = 5 * 60 * 1000; // 5 minutes max wait time
+  const MAX_WAIT_TIME = 10 * 60 * 1000; // 10 minutes max wait time (extended for 40 pages)
 
   useEffect(() => {
     if (!jobId) return;
@@ -40,7 +40,7 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
         // Check if we've exceeded max wait time
         const elapsed = Date.now() - startTime;
         if (elapsed > MAX_WAIT_TIME) {
-          onError('Audit is taking too long. Please try again with a smaller number of pages.');
+          onError('Audit is taking longer than expected (10 minutes). The audit may still be processing. Please wait a bit longer or try again with fewer pages.');
           return;
         }
 

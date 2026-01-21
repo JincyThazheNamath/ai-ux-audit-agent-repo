@@ -160,10 +160,10 @@ export async function POST(request: NextRequest) {
               jobId,
               {
                 batchSize: 3, // Reduced from 8 to 3 to avoid overwhelming browser/API
-                delayBetweenBatches: 2000, // Increased from 1000 to 2000ms
-                delayBetweenRequests: 1000, // Increased from 200 to 1000ms for sequential processing
+                delayBetweenBatches: 3000, // Increased to 3000ms (3s) for 10-minute window
+                delayBetweenRequests: 1500, // Increased to 1500ms (1.5s) for stability
                 maxRetries: 3, // Increased from 2 to 3
-                timeoutPerPage: 60000, // Increased from 30000 to 60000ms (60s) for slow pages
+                timeoutPerPage: 90000, // Increased to 90000ms (90s) for slow pages and 10-minute window
               }
             );
             
