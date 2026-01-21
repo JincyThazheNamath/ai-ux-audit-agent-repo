@@ -23,7 +23,19 @@ const nextConfig = {
       config.externals.push('@sparticuz/chromium');
     }
     
-    // Optimize bundle splitting
+    // Fix for webpack chunk loading issues in development
+    if (dev) {
+      config.optimization = {
+        ...config.optimization,
+        // Use named chunks in development for better debugging
+        moduleIds: 'named',
+        // Ensure chunks are properly generated
+        removeAvailableModules: false,
+        removeEmptyChunks: false,
+      };
+    }
+    
+    // Optimize bundle splitting for production
     if (!dev && !isServer) {
       config.optimization = {
         ...config.optimization,

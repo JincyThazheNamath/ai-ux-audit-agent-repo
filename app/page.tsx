@@ -11,9 +11,16 @@ import SiteAuditProgress from '../components/SiteAuditProgress';
 import SiteOverview from '../components/SiteOverview';
 
 // Lazy load heavy components to reduce initial bundle size
-const AuditFindingCard = lazy(() => import('../components/AuditFindingCard'));
-const SummaryCard = lazy(() => import('../components/SummaryCard'));
-const FilterDropdown = lazy(() => import('../components/FilterDropdown'));
+// Using dynamic imports with explicit chunk names for better webpack chunking
+const AuditFindingCard = lazy(() => 
+  import(/* webpackChunkName: "audit-finding-card" */ '../components/AuditFindingCard')
+);
+const SummaryCard = lazy(() => 
+  import(/* webpackChunkName: "summary-card" */ '../components/SummaryCard')
+);
+const FilterDropdown = lazy(() => 
+  import(/* webpackChunkName: "filter-dropdown" */ '../components/FilterDropdown')
+);
 
 function HomeContent() {
   const { mode } = useViewMode();
