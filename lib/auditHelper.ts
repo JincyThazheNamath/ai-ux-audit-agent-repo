@@ -29,28 +29,40 @@ if (!apiKey || apiKey.trim() === '') {
 async function launchBrowser() {
   const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
   
+  console.log(`  [Browser] Environment: ${isProduction ? 'PRODUCTION (Vercel)' : 'DEVELOPMENT'}`);
+  
   const launchOptions: any = {
     headless: true,
   };
 
   if (isProduction) {
-    const executablePath = await chromium.executablePath();
-    if (!executablePath) {
-      throw new Error('Chromium executable path is null or undefined');
+    try {
+      console.log(`  [Browser] Initializing @sparticuz/chromium for Vercel...`);
+      const executablePath = await chromium.executablePath();
+      if (!executablePath) {
+        throw new Error('Chromium executable path is null or undefined from @sparticuz/chromium');
+      }
+      console.log(`  [Browser] ✅ Chromium executable path obtained: ${executablePath.substring(0, 50)}...`);
+      
+      launchOptions.args = chromium.args || [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+      ];
+      launchOptions.executablePath = executablePath;
+      console.log(`  [Browser] ✅ Launch options configured for Vercel`);
+    } catch (chromiumError: any) {
+      console.error(`  [Browser] ❌ Failed to initialize @sparticuz/chromium:`, chromiumError.message);
+      console.error(`  [Browser] Error stack:`, chromiumError.stack);
+      throw new Error(`Chromium initialization failed in production: ${chromiumError.message}`);
     }
-    launchOptions.args = chromium.args || [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-gpu',
-      '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process',
-    ];
-    launchOptions.executablePath = executablePath;
   } else {
     launchOptions.args = [
       '--no-sandbox',

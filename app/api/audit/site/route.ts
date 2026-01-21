@@ -5,6 +5,11 @@ import { createProgressTracker, updateStatus, getProgress, getAllJobs, debugProg
 import { processBatches, FailedPage } from '../../../../lib/batchProcessor';
 import { generateMockPages, generateMockAuditForPage } from '../../../../lib/mockData';
 
+// Vercel serverless function configuration
+// Critical: Set maxDuration to 300s (5 minutes) for batch processing
+export const maxDuration = 300;
+export const runtime = 'nodejs';
+
 // Simple UUID generator
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -99,11 +104,32 @@ export async function POST(request: NextRequest) {
     await debugProgressStore();
 
     // Start page discovery and audit process in background
+    // CRITICAL: This function must persist all state to Redis/KV immediately
+    // because Vercel may terminate the function instance after response is sent
     (async () => {
+      let backgroundError: any = null;
       try {
+        // Ensure Redis/KV is initialized before starting
+        // Force initialization - it's handled internally in progressTracker
+        // Just ensure we've imported and called getProgress to trigger initialization
+        const testProgress = await getProgress(jobId);
+        if (!testProgress) {
+          console.error('[Background] ❌ CRITICAL: Cannot get progress after job creation');
+        }
+        
+        console.log(`[Background] Starting full-site audit for ${targetUrl.toString()}...`);
+        console.log(`[Background] Job ID: ${jobId}`);
+        
         // Step 1: Discover pages
-        console.log(`🔍 Discovering pages for ${targetUrl.toString()}...`);
+        console.log(`[Background] 🔍 Discovering pages for ${targetUrl.toString()}...`);
         await updateStatus(jobId, 'discovering', 'Starting page discovery...');
+        
+        // Persist status immediately to ensure it's saved
+        const discoverStatusCheck = await getProgress(jobId);
+        if (!discoverStatusCheck || discoverStatusCheck.status !== 'discovering') {
+          console.error('[Background] ⚠️ Status not persisted, retrying...');
+          await updateStatus(jobId, 'discovering', 'Starting page discovery...');
+        }
         
         // Add timeout for discovery (60 seconds max)
         const discoveryPromise = discoverPagesWithDepth(targetUrl.toString(), {
@@ -386,30 +412,56 @@ export async function POST(request: NextRequest) {
         } else {
           await updateStatus(jobId, 'completed');
         }
-        console.log(`✅ Full-site audit completed: ${successful.length} successful, ${failed.length} failed`);
-      } catch (error: any) {
-        console.error('❌ Full-site audit error:', error);
-        console.error('Error stack:', error.stack);
+        console.log(`[Background] ✅ Full-site audit completed: ${successful.length} successful, ${failed.length} failed`);
         
-        // Update status to failed
-        const finalProgress = await getProgress(jobId);
-        if (finalProgress) {
-          // Store error information
-          (finalProgress as any).finalResult = {
-            error: error.message || 'Unknown error occurred',
-            errorType: 'audit_failed',
-            failedPages: finalProgress.pageResults.filter(p => p.status === 'failed').map(p => ({
-              url: p.url,
-              error: 'Audit process failed',
-              errorType: 'unknown' as const,
-              retryable: true,
-            })),
-            aggregated: null,
-            sortedPages: [],
-            pageResults: [],
-            isMockData: false,
-          };
-          await updateStatus(jobId, 'failed');
+        // Final status persistence check
+        const finalStatusCheck = await getProgress(jobId);
+        if (finalStatusCheck && finalStatusCheck.status === 'completed') {
+          console.log(`[Background] ✅ Final status confirmed in KV: ${jobId}`);
+        } else {
+          console.error(`[Background] ⚠️ Final status may not be persisted correctly`);
+          // Force final update
+          await updateStatus(jobId, 'completed');
+        }
+      } catch (error: any) {
+        backgroundError = error;
+        console.error('[Background] ❌ Full-site audit error:', error);
+        console.error('[Background] Error stack:', error.stack);
+        console.error('[Background] Error message:', error.message);
+        console.error('[Background] Error name:', error.name);
+        
+        try {
+          // Update status to failed - wrap in try-catch to ensure we don't fail silently
+          const finalProgress = await getProgress(jobId);
+          if (finalProgress) {
+            // Store error information
+            (finalProgress as any).finalResult = {
+              error: error.message || 'Unknown error occurred',
+              errorType: 'audit_failed',
+              errorDetails: {
+                name: error.name,
+                message: error.message,
+                stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+              },
+              failedPages: finalProgress.pageResults.filter(p => p.status === 'failed').map(p => ({
+                url: p.url,
+                error: 'Audit process failed',
+                errorType: 'unknown' as const,
+                retryable: true,
+              })),
+              aggregated: null,
+              sortedPages: [],
+              pageResults: [],
+              isMockData: false,
+            };
+            await updateStatus(jobId, 'failed');
+            console.log('[Background] ✅ Error status saved to KV');
+          } else {
+            console.error('[Background] ❌ CRITICAL: Cannot update status - progress not found');
+          }
+        } catch (statusError: any) {
+          console.error('[Background] ❌ CRITICAL: Failed to save error status:', statusError);
+          console.error('[Background] Original error:', error);
         }
       }
     })();
