@@ -85,8 +85,29 @@ async function initializeKv() {
       console.log('   REDIS_URL starts with redis://:', process.env.REDIS_URL?.startsWith('redis://'));
       
       try {
+        // Suppress Node.js deprecation warning for url.parse() used by ioredis
+        // This is a known issue with ioredis v5.x - it will be fixed in future versions
+        const originalEmitWarning = process.emitWarning;
+        process.emitWarning = function(warning: any, ...args: any[]) {
+          // Suppress DEP0169 deprecation warning about url.parse()
+          if (typeof warning === 'object' && warning?.name === 'DeprecationWarning') {
+            if (warning.message && warning.message.includes('url.parse()')) {
+              return; // Suppress this specific warning
+            }
+            if (warning.code === 'DEP0169') {
+              return; // Suppress DEP0169 (url.parse deprecation)
+            }
+          }
+          if (typeof warning === 'string' && warning.includes('url.parse()')) {
+            return; // Suppress url.parse() deprecation warning
+          }
+          return originalEmitWarning.apply(process, [warning, ...args]);
+        };
+        
         // Lazy import - only when needed and in runtime context
         const Redis = require('ioredis');
+        
+        // Create Redis instance (may emit warning during constructor)
         const redis = new Redis(process.env.REDIS_URL, {
           maxRetriesPerRequest: 3,
           lazyConnect: true, // Don't connect immediately
@@ -98,11 +119,14 @@ async function initializeKv() {
             }
             const delay = Math.min(times * 50, 2000); // Exponential backoff
             console.log(`   Redis retry attempt ${times}, waiting ${delay}ms...`);
-            return delay;
-          }
-        });
-        
-        // Add error handlers for better debugging
+          return delay;
+        }
+      });
+      
+      // Restore original emitWarning after Redis is created
+      process.emitWarning = originalEmitWarning;
+      
+      // Add error handlers for better debugging
         redis.on('error', (err: any) => {
           console.error('❌ Redis connection error:', err.message);
           console.error('   Error code:', err.code);
