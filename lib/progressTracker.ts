@@ -55,19 +55,26 @@ async function initializeKv() {
     return;
   }
 
-  // Skip initialization during build time or static generation
-  if (typeof window === 'undefined') {
-    // Check if we're in build phase
-    const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build' || 
-                         process.env.NEXT_PHASE === 'phase-development-build' ||
-                         !process.env.RUNTIME;
-    
-    if (isBuildPhase) {
-      console.log('⚠️ Skipping KV initialization during build/static generation');
-      kvInitialized = true;
-      return;
+    // Skip initialization during build time or static generation
+    // But allow initialization at runtime even if RUNTIME is not set (serverless execution)
+    if (typeof window === 'undefined') {
+      // Check if we're in build phase
+      const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build' || 
+                           process.env.NEXT_PHASE === 'phase-development-build';
+      
+      // In Vercel serverless, we should always initialize (even during build if it's a serverless function)
+      // Only skip if we're in actual build phase AND not in Vercel
+      if (isBuildPhase && !process.env.VERCEL) {
+        console.log('⚠️ Skipping KV initialization during build/static generation');
+        kvInitialized = true;
+        return;
+      }
+      
+      // If we're in Vercel, always allow initialization (serverless functions need it)
+      if (process.env.VERCEL) {
+        // This is fine - continue with initialization
+      }
     }
-  }
 
   try {
     // First, try Redis Labs connection string (REDIS_URL) - preferred for user's setup
@@ -269,13 +276,21 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
       console.warn('⚠️ Progress will only be available in current instance (not persistent in serverless)');
     }
   } else {
-    // Check if we're in production without KV
+    // Check if we're in production without Redis/KV
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
     if (isProduction) {
-      console.error('❌ CRITICAL: Vercel KV not configured in production!');
-      console.error('   Progress will NOT persist across serverless invocations');
-      console.error('   Please set KV_REST_API_URL and KV_REST_API_TOKEN environment variables');
-      console.error('   See VERCEL_KV_SETUP.md for instructions');
+      const hasRedisUrl = !!process.env.REDIS_URL;
+      const hasKvRest = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+      
+      if (!hasRedisUrl && !hasKvRest) {
+        console.error('❌ CRITICAL: Redis/KV not configured in production!');
+        console.error('   Progress will NOT persist across serverless invocations');
+        console.error('   Please set REDIS_URL (for Redis Labs) or KV_REST_API_URL + KV_REST_API_TOKEN (for Vercel KV)');
+        console.error('   See VERCEL_KV_SETUP.md for instructions');
+      } else if (hasRedisUrl) {
+        console.log('⚠️ REDIS_URL is set but Redis connection not initialized yet');
+        console.log('   Connection will be established on first use');
+      }
     }
   }
   
