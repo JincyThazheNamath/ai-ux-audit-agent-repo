@@ -10,6 +10,19 @@ import { generateMockPages, generateMockAuditForPage } from '../../../../lib/moc
 export const maxDuration = 300;
 export const runtime = 'nodejs';
 
+// Import waitUntil to keep function alive after response
+// This ensures background work continues even after HTTP response is sent
+let waitUntil: ((promise: Promise<any>) => void) | null = null;
+try {
+  // Try to import waitUntil from @vercel/functions (Vercel Pro/Enterprise)
+  const vercelFunctions = require('@vercel/functions');
+  waitUntil = vercelFunctions.waitUntil;
+  console.log('✅ waitUntil available from @vercel/functions');
+} catch (e) {
+  // Fallback: waitUntil might not be available on all plans
+  console.log('⚠️ waitUntil not available, background work may be terminated after response');
+}
+
 // Simple UUID generator
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -104,9 +117,9 @@ export async function POST(request: NextRequest) {
     await debugProgressStore();
 
     // Start page discovery and audit process in background
-    // CRITICAL: This function must persist all state to Redis/KV immediately
-    // because Vercel may terminate the function instance after response is sent
-    (async () => {
+    // CRITICAL: Use waitUntil to ensure Vercel keeps the function alive after response
+    // This prevents Vercel from terminating the background work
+    const backgroundPromise = (async () => {
       let backgroundError: any = null;
       try {
         // Ensure Redis/KV is initialized before starting
@@ -465,6 +478,42 @@ export async function POST(request: NextRequest) {
         }
       }
     })();
+    
+    // CRITICAL: Use waitUntil to keep function alive after response
+    // This ensures Vercel doesn't terminate the background work
+    // waitUntil is available in Vercel Pro/Enterprise plans
+    if (waitUntil) {
+      try {
+        waitUntil(backgroundPromise);
+        console.log('✅ Background work registered with waitUntil - will continue after response');
+      } catch (waitError: any) {
+        console.error('❌ Failed to register waitUntil:', waitError.message);
+        // Continue anyway - background promise will still run
+        backgroundPromise.catch((error) => {
+          console.error('[Background] Background promise rejected:', error);
+        });
+      }
+    } else {
+      // Fallback: Start background work but warn that it may be terminated
+      backgroundPromise.catch((error) => {
+        console.error('[Background] Background promise rejected:', error);
+      });
+      console.log('⚠️ waitUntil not available - background work may be terminated by Vercel');
+      console.log('   This is normal on Hobby plan - background work will continue if function stays alive');
+      console.log('   For guaranteed execution, upgrade to Vercel Pro/Enterprise');
+      
+      // CRITICAL FIX: Wait a bit for discovery to start before returning
+      // This gives the background function time to initialize
+      console.log('⏳ Waiting 3 seconds for discovery to initialize...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      const earlyCheck = await getProgress(jobId);
+      if (earlyCheck && (earlyCheck.status === 'discovering' || earlyCheck.status === 'auditing')) {
+        console.log(`✅ Discovery started successfully - status: ${earlyCheck.status}`);
+      } else {
+        console.log(`⚠️ Discovery may not have started yet - status: ${earlyCheck?.status || 'unknown'}`);
+      }
+    }
 
     // Verify job exists before returning (with multiple attempts)
     let verifyProgress = await getProgress(jobId);
