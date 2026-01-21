@@ -103,11 +103,38 @@ export async function POST(request: NextRequest) {
       try {
         // Step 1: Discover pages
         console.log(`🔍 Discovering pages for ${targetUrl.toString()}...`);
+        await updateStatus(jobId, 'discovering', 'Starting page discovery...');
         
-        const discoveredPages = await discoverPagesWithDepth(targetUrl.toString(), {
+        // Add timeout for discovery (60 seconds max)
+        const discoveryPromise = discoverPagesWithDepth(targetUrl.toString(), {
           maxPages,
           maxDepth,
         });
+        
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Discovery timeout: Page discovery took longer than 60 seconds')), 60000)
+        );
+        
+        let discoveredPages: Awaited<ReturnType<typeof discoverPagesWithDepth>>;
+        try {
+          discoveredPages = await Promise.race([discoveryPromise, timeoutPromise]);
+        } catch (discoveryError: any) {
+          console.error('❌ Discovery failed or timed out:', discoveryError.message);
+          await updateStatus(jobId, 'failed');
+          const finalProgress = await getProgress(jobId);
+          if (finalProgress) {
+            (finalProgress as any).finalResult = {
+              error: `Page discovery failed: ${discoveryError.message}`,
+              errorType: 'discovery_failed',
+              failedPages: [],
+              aggregated: null,
+              sortedPages: [],
+              pageResults: [],
+              isMockData: false,
+            };
+          }
+          return;
+        }
         
         const pageUrls = discoveredPages.map(page => page.url);
         const actualPageCount = Math.min(pageUrls.length, maxPages);
@@ -115,10 +142,11 @@ export async function POST(request: NextRequest) {
         console.log(`✅ Discovered ${actualPageCount} pages`);
         
         // Update progress tracker with discovered pages
-        const progress = await getProgress(jobId);
+        let progress = await getProgress(jobId);
         if (!progress) {
           console.error('❌ CRITICAL: Job not found after discovery');
-          return;
+          // Try to recreate the job
+          progress = await createProgressTracker(jobId, actualPageCount);
         }
         
         progress.totalPages = actualPageCount;
@@ -127,11 +155,18 @@ export async function POST(request: NextRequest) {
           status: 'pending' as const,
         }));
         
-        // Save updated progress
-        await updateStatus(jobId, 'auditing');
+        // Save updated progress - ensure it's persisted
+        await updateStatus(jobId, 'auditing', `Found ${actualPageCount} pages, starting audit...`);
         
-               console.log('✅ Updated job with', actualPageCount, 'pages');
-               await debugProgressStore();
+        // Double-check it was saved
+        const verifyProgress = await getProgress(jobId);
+        if (!verifyProgress || verifyProgress.status !== 'auditing') {
+          console.error('⚠️ Warning: Status update may not have persisted. Retrying...');
+          await updateStatus(jobId, 'auditing', `Found ${actualPageCount} pages, starting audit...`);
+        }
+        
+        console.log('✅ Updated job with', actualPageCount, 'pages');
+        await debugProgressStore();
 
         // Step 2: Process pages in batches (or use mock data if enabled)
         

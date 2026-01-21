@@ -129,11 +129,18 @@ export async function parseSitemap(sitemapUrl: string): Promise<string[]> {
   const urls: string[] = [];
   
   try {
+    // Add timeout for sitemap fetch (5 seconds)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
     const response = await fetch(sitemapUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; UXAuditBot/1.0)',
       },
+      signal: controller.signal,
     });
+    
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       return urls;
@@ -151,8 +158,12 @@ export async function parseSitemap(sitemapUrl: string): Promise<string[]> {
     }
     
     return urls;
-  } catch (error) {
-    console.error('Error parsing sitemap:', error);
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      console.error('Sitemap fetch timeout (5s limit)');
+    } else {
+      console.error('Error parsing sitemap:', error);
+    }
     return urls;
   }
 }
@@ -171,15 +182,27 @@ export async function findSitemap(baseUrl: string): Promise<string | null> {
   for (const path of commonSitemapPaths) {
     try {
       const sitemapUrl = `${baseUrlObj.protocol}//${baseUrlObj.host}${path}`;
-      const response = await fetch(sitemapUrl, {
-        method: 'HEAD',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; UXAuditBot/1.0)',
-        },
-      });
+      // Add timeout for sitemap check (3 seconds)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
       
-      if (response.ok) {
-        return sitemapUrl;
+      try {
+        const response = await fetch(sitemapUrl, {
+          method: 'HEAD',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; UXAuditBot/1.0)',
+          },
+          signal: controller.signal,
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          return sitemapUrl;
+        }
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        // Continue to next path on error or timeout
       }
     } catch {
       continue;
@@ -200,17 +223,25 @@ async function crawlPageWithDepth(
   options: CrawlOptions
 ): Promise<{ links: string[], title?: string }> {
   try {
-    const response = await fetch(pageUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; UXAuditBot/1.0)',
-      },
-    });
+    // Add timeout for fetch (10 seconds per page)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     
-    if (!response.ok) {
-      return { links: [] };
-    }
-    
-    const html = await response.text();
+    try {
+      const response = await fetch(pageUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; UXAuditBot/1.0)',
+        },
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        return { links: [] };
+      }
+      
+      const html = await response.text();
     
     // Extract page title
     const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
@@ -235,6 +266,15 @@ async function crawlPageWithDepth(
     );
     
     return { links: filteredLinks, title };
+    } catch (fetchError: any) {
+      clearTimeout(timeoutId);
+      if (fetchError.name === 'AbortError') {
+        console.error(`Timeout crawling page ${pageUrl} (10s limit)`);
+      } else {
+        console.error(`Error fetching page ${pageUrl}:`, fetchError.message);
+      }
+      return { links: [] };
+    }
   } catch (error) {
     console.error(`Error crawling page ${pageUrl}:`, error);
     return { links: [] };
@@ -305,7 +345,17 @@ export async function discoverPagesWithDepth(
     depth: 0,
   });
   
+  // Add overall timeout for discovery (45 seconds max)
+  const discoveryStartTime = Date.now();
+  const MAX_DISCOVERY_TIME = 45000; // 45 seconds
+  
   while (toVisit.length > 0 && discoveredPages.size < maxPages) {
+    // Check if we've exceeded max discovery time
+    if (Date.now() - discoveryStartTime > MAX_DISCOVERY_TIME) {
+      console.log(`⚠️ Discovery timeout reached (45s), returning ${discoveredPages.size} pages found so far`);
+      break;
+    }
+    
     const current = toVisit.shift()!;
     
     if (current.depth >= maxDepth) {

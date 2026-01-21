@@ -468,30 +468,57 @@ export async function updateStatus(jobId: string, status: AuditProgress['status'
   let progress = progressStore.get(jobId);
   if (!progress && useKv && kv) {
     try {
-      progress = await kv.get(`audit:progress:${jobId}`);
-      if (progress) {
-        progressStore.set(jobId, progress);
+      const kvData = await kv.get(`audit:progress:${jobId}`) as string | null;
+      if (kvData) {
+        const parsedProgress = JSON.parse(kvData) as AuditProgress;
+        if (parsedProgress) {
+          progress = parsedProgress;
+          progressStore.set(jobId, progress);
+        }
       }
     } catch (e) {
       // Ignore KV errors
+      console.error('⚠️ Failed to get progress from KV in updateStatus:', e);
     }
   }
-  if (!progress) return;
+  
+  // If still no progress, create a minimal one (shouldn't happen, but safety check)
+  if (!progress) {
+    console.warn(`⚠️ Progress not found for jobId ${jobId} in updateStatus, creating minimal progress`);
+    progress = {
+      jobId,
+      status,
+      totalPages: 1,
+      completedPages: 0,
+      percentage: 0,
+      estimatedTimeLeft: 0,
+      startTime: Date.now(),
+      pageResults: [],
+    };
+  }
   
   progress.status = status;
   if (currentPage) {
     progress.currentPage = currentPage;
   }
   
-  // Update in memory
+  // Update in memory FIRST (immediate)
   progressStore.set(jobId, progress);
   
-  // Also update in KV if available
+  // Also update in KV if available (persistent storage)
   if (useKv && kv) {
     try {
       await kv.set(`audit:progress:${jobId}`, JSON.stringify(progress), { ex: 3600 });
+      console.log(`📝 Updated status in KV: ${jobId} -> ${status}`);
     } catch (kvError: any) {
       console.error('⚠️ Failed to update KV:', kvError.message);
+      console.error('   Status update saved in memory only - may not persist across serverless invocations');
+    }
+  } else {
+    // Log warning if KV is not available in production
+    const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+    if (isProduction) {
+      console.warn(`⚠️ KV not available - status update saved in memory only for ${jobId}`);
     }
   }
 }
