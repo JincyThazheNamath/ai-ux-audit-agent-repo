@@ -181,8 +181,20 @@ async function initializeKv() {
       }
     }
     
-    console.log('⚠️ Neither KV_REST_API_URL nor REDIS_URL is set');
-    console.log('   Progress tracking will use in-memory storage (may not persist in serverless)');
+    // Check if we're in production and provide helpful guidance
+    const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+    
+    if (isProduction) {
+      console.error('❌ CRITICAL: No KV/Redis configuration found in production!');
+      console.error('   Options:');
+      console.error('   1. Vercel KV: Set KV_REST_API_URL and KV_REST_API_TOKEN');
+      console.error('      → Get these from Vercel Dashboard → Storage → Your KV Database → .env.local tab');
+      console.error('   2. Redis Labs: Set REDIS_URL with connection string');
+      console.error('   Progress tracking will NOT persist across serverless invocations without KV/Redis');
+    } else {
+      console.log('⚠️ Neither KV_REST_API_URL nor REDIS_URL is set');
+      console.log('   Progress tracking will use in-memory storage (may not persist in serverless)');
+    }
     kvInitialized = true;
   } catch (e: any) {
     console.log('⚠️ Failed to initialize Redis/KV:', e.message || e);
