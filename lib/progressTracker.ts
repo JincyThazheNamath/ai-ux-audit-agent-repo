@@ -81,32 +81,66 @@ async function initializeKv() {
     }
     // Second, try Redis Labs connection string (REDIS_URL)
     if (process.env.REDIS_URL) {
-      // Lazy import - only when needed and in runtime context
-      const Redis = require('ioredis');
-      const redis = new Redis(process.env.REDIS_URL, {
-        maxRetriesPerRequest: 3,
-        lazyConnect: true, // Don't connect immediately
-        retryStrategy: (times: number) => {
-          if (times > 3) {
-            return null; // Stop retrying
-          }
-          return Math.min(times * 50, 2000); // Exponential backoff
-        }
-      });
+      console.log('🔍 Attempting to initialize Redis Labs connection...');
+      console.log('   REDIS_URL present:', !!process.env.REDIS_URL);
+      console.log('   REDIS_URL length:', process.env.REDIS_URL?.length);
+      console.log('   REDIS_URL starts with redis://:', process.env.REDIS_URL?.startsWith('redis://'));
       
-      // Connect lazily on first use
-      let connected = false;
-      async function ensureConnected() {
-        if (!connected) {
-          try {
-            await redis.connect();
-            connected = true;
-          } catch (err) {
-            console.error('⚠️ Failed to connect to Redis:', err);
-            throw err;
+      try {
+        // Lazy import - only when needed and in runtime context
+        const Redis = require('ioredis');
+        const redis = new Redis(process.env.REDIS_URL, {
+          maxRetriesPerRequest: 3,
+          lazyConnect: true, // Don't connect immediately
+          connectTimeout: 10000, // 10 second connection timeout
+          retryStrategy: (times: number) => {
+            if (times > 3) {
+              console.error(`⚠️ Redis connection failed after ${times} attempts`);
+              return null; // Stop retrying
+            }
+            const delay = Math.min(times * 50, 2000); // Exponential backoff
+            console.log(`   Redis retry attempt ${times}, waiting ${delay}ms...`);
+            return delay;
+          }
+        });
+        
+        // Add error handlers for better debugging
+        redis.on('error', (err: any) => {
+          console.error('❌ Redis connection error:', err.message);
+          console.error('   Error code:', err.code);
+          console.error('   Error stack:', err.stack);
+        });
+        
+        redis.on('connect', () => {
+          console.log('✅ Redis connection established');
+        });
+        
+        redis.on('ready', () => {
+          console.log('✅ Redis is ready to accept commands');
+        });
+        
+        // Connect lazily on first use
+        let connected = false;
+        let connectionAttempted = false;
+        async function ensureConnected() {
+          if (!connected && !connectionAttempted) {
+            connectionAttempted = true;
+            try {
+              console.log('🔌 Attempting Redis connection...');
+              await redis.connect();
+              connected = true;
+              console.log('✅ Redis connected successfully');
+            } catch (err: any) {
+              console.error('❌ Failed to connect to Redis:', err.message);
+              console.error('   Error code:', err.code);
+              console.error('   Error name:', err.name);
+              console.error('   Full error:', err);
+              throw err;
+            }
+          } else if (!connected && connectionAttempted) {
+            throw new Error('Redis connection previously failed');
           }
         }
-      }
       
       // Create a compatible interface that matches @vercel/kv API
       kv = {
@@ -134,8 +168,17 @@ async function initializeKv() {
       };
       useKv = true;
       kvInitialized = true;
-      console.log('✅ Redis Labs connection ready for persistent storage');
+      console.log('✅ Redis Labs connection initialized (lazy connect enabled)');
+      console.log('   Connection will be established on first use');
       return;
+      } catch (redisError: any) {
+        console.error('❌ Failed to initialize Redis:', redisError.message);
+        console.error('   Error code:', redisError.code);
+        console.error('   Error name:', redisError.name);
+        console.error('   Will fall back to in-memory storage');
+        kvInitialized = true; // Mark as initialized to prevent retries
+        return;
+      }
     }
     
     console.log('⚠️ Neither KV_REST_API_URL nor REDIS_URL is set');
@@ -413,16 +456,32 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
   // If not found and KV is available, try KV
   if (!progress && useKv && kv) {
     try {
-      const kvData = await kv.get(`audit:progress:${jobId}`) as string | null;
+      console.log(`🔍 Checking KV for jobId: ${jobId}`);
+      const kvKey = `audit:progress:${jobId}`;
+      console.log(`   KV key: ${kvKey}`);
+      const kvData = await kv.get(kvKey) as string | null;
       if (kvData) {
-        const kvProgress = JSON.parse(kvData);
         console.log(`✅ Found progress in KV: ${jobId}`);
+        console.log(`   KV data length: ${kvData.length} bytes`);
+        const kvProgress = JSON.parse(kvData);
         // Also store in memory for faster subsequent access
         progressStore.set(jobId, kvProgress);
         progress = kvProgress;
+      } else {
+        console.log(`❌ No data found in KV for key: ${kvKey}`);
+        // Try to list all keys to see what's available
+        try {
+          const allKeys = await kv.keys('audit:*') as string[];
+          console.log(`   Available KV keys (${allKeys.length}):`, allKeys.slice(0, 10));
+        } catch (listError: any) {
+          console.error('   Failed to list KV keys:', listError.message);
+        }
       }
     } catch (kvError: any) {
-      console.error('⚠️ Failed to get from KV:', kvError.message);
+      console.error('❌ Failed to get from KV:', kvError.message);
+      console.error('   Error code:', kvError.code);
+      console.error('   Error name:', kvError.name);
+      console.error('   Error stack:', kvError.stack);
     }
   }
   
