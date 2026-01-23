@@ -311,13 +311,17 @@ Return ONLY a valid JSON array of findings. Format:
 
 Focus on the most impactful issues. Return 8-15 findings total.`;
 
-  const modelNames = [
-    "claude-3-sonnet-20240229",     // Primary: Claude 3 Sonnet (widely available)
-    "claude-3-opus-20240229",       // Fallback: Claude 3 Opus
-    "claude-3-haiku-20240307",      // Fast fallback: Claude 3 Haiku
-    "claude-3-5-sonnet",             // Try Claude 3.5 Sonnet (if available)
-    "claude-3-5-haiku",              // Try Claude 3.5 Haiku (if available)
-  ];
+  // Use environment variable if set, otherwise use fallback list
+  const preferredModel = process.env.CLAUDE_MODEL || process.env.ANTHROPIC_MODEL;
+  const modelNames = preferredModel 
+    ? [preferredModel]  // Use environment variable model first
+    : [
+        "claude-3-haiku-20240307",      // Primary: Claude 3 Haiku (most accessible)
+        "claude-3-sonnet-20240229",     // Fallback: Claude 3 Sonnet
+        "claude-3-opus-20240229",       // Fallback: Claude 3 Opus
+        "claude-3-5-haiku",             // Try Claude 3.5 Haiku (if available)
+        "claude-3-5-sonnet",            // Try Claude 3.5 Sonnet (if available)
+      ];
 
   // Check API key before making requests
   if (!apiKey || apiKey.trim() === '') {
@@ -397,19 +401,36 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
     if (content.type === 'text') {
       const jsonMatch = content.text.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
-        findings = JSON.parse(jsonMatch[0]);
+        // Clean JSON string: remove control characters that cause parsing errors
+        let jsonString = jsonMatch[0];
+        // Remove control characters (except newlines, tabs, carriage returns)
+        jsonString = jsonString.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
+        // Replace any remaining problematic characters
+        jsonString = jsonString.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        
+        try {
+          findings = JSON.parse(jsonString);
+        } catch (parseError: any) {
+          console.error('Error parsing cleaned JSON:', parseError.message);
+          console.error('JSON string length:', jsonString.length);
+          console.error('JSON preview (first 500 chars):', jsonString.substring(0, 500));
+          throw parseError;
+        }
       }
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error parsing AI response:', error);
+    console.error('Error details:', error.message);
+    console.error('Error stack:', error.stack);
+    // Return a fallback finding instead of empty array
     findings = [
       {
-        category: 'accessibility',
-        severity: 'high',
+        category: 'accessibility' as const,
+        severity: 'high' as const,
         issue: 'Analysis completed',
-        description: 'AI analysis completed. Some findings may need manual review.',
+        description: 'AI analysis completed. Some findings may need manual review due to parsing error.',
         location: 'Page-wide',
-        suggestion: 'Review the full audit report',
+        suggestion: 'Review the full audit report. If this persists, check ANTHROPIC_API_KEY and model access.',
       },
     ];
   }
