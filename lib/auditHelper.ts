@@ -184,35 +184,63 @@ export async function auditSinglePage(url: string): Promise<AuditResult> {
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080 });
     
-    // Navigate to page with multiple wait strategies
+    // Navigate to page with aggressive timeouts to prevent hanging
     console.log(`  📄 Loading page: ${targetUrl.toString()}`);
+    const PAGE_LOAD_TIMEOUT = 30000; // 30 seconds max for page load (reduced to fail faster)
+    const DOM_CONTENT_TIMEOUT = 20000; // 20 seconds for domcontentloaded fallback
+    
     try {
-      // Try networkidle2 first, fallback to domcontentloaded if timeout
+      // Use AbortController to ensure we can cancel if needed
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), PAGE_LOAD_TIMEOUT);
+      
       try {
-        await page.goto(targetUrl.toString(), { 
-          waitUntil: 'networkidle2',
-          timeout: 60000 // 60 seconds for networkidle (increased for 10-minute window)
-        });
-        console.log(`  ✅ Page loaded successfully (networkidle2)`);
-      } catch (networkIdleError: any) {
-        // Fallback to domcontentloaded if networkidle2 times out
-        console.log(`  ⚠️ networkidle2 timeout, trying domcontentloaded...`);
+        // Try domcontentloaded first (faster, more reliable)
         await page.goto(targetUrl.toString(), { 
           waitUntil: 'domcontentloaded',
-          timeout: 45000 // 45 seconds (increased for 10-minute window)
+          timeout: DOM_CONTENT_TIMEOUT
         });
-        // Wait a bit for dynamic content
-        await page.waitForTimeout(2000);
-        console.log(`  ✅ Page loaded successfully (domcontentloaded fallback)`);
+        clearTimeout(timeoutId);
+        // Wait a short time for critical resources
+        await page.waitForTimeout(3000); // 3 seconds for critical resources
+        console.log(`  ✅ Page loaded successfully (domcontentloaded)`);
+      } catch (domError: any) {
+        clearTimeout(timeoutId);
+        // If domcontentloaded fails, try load event (fastest)
+        console.log(`  ⚠️ domcontentloaded timeout, trying load event...`);
+        try {
+          await page.goto(targetUrl.toString(), { 
+            waitUntil: 'load',
+            timeout: 15000 // 15 seconds max
+          });
+          console.log(`  ✅ Page loaded successfully (load event fallback)`);
+        } catch (loadError: any) {
+          // Last resort: just navigate without waiting
+          console.log(`  ⚠️ load event timeout, navigating without wait...`);
+          await page.goto(targetUrl.toString(), { 
+            waitUntil: 'commit', // Just wait for navigation to start
+            timeout: 10000 // 10 seconds max
+          });
+          await page.waitForTimeout(2000); // Wait 2 seconds for basic content
+          console.log(`  ✅ Page navigation completed (minimal wait)`);
+        }
       }
     } catch (error: any) {
-      await browser.close();
+      // Ensure browser is closed even on error
+      try {
+        await browser.close();
+      } catch (closeError) {
+        console.error(`  ⚠️ Error closing browser:`, closeError);
+      }
       console.error(`  ❌ Failed to load page: ${error.message}`);
-      throw new Error(`Failed to load page: ${error.message}. Please check the URL is accessible.`);
+      throw new Error(`Failed to load page: ${error.message}. Page may be slow or inaccessible.`);
     }
 
-  // Extract page data
-  const pageData = await page.evaluate(() => {
+  // Extract page data with timeout to prevent hanging
+  console.log(`  📊 Extracting page data...`);
+  const DATA_EXTRACTION_TIMEOUT = 15000; // 15 seconds max for data extraction
+  
+  const pageDataPromise = page.evaluate(() => {
     const getComputedStyles = (element: Element) => {
       const styles = window.getComputedStyle(element);
       return {
@@ -270,11 +298,22 @@ export async function auditSinglePage(url: string): Promise<AuditResult> {
       html: document.documentElement.outerHTML.substring(0, 50000),
     };
   });
-    console.log(`  ✅ Page data extracted (${pageData.images.length} images, ${pageData.links.length} links)`);
+  
+  const dataExtractionTimeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`Data extraction timeout after ${DATA_EXTRACTION_TIMEOUT}ms`)), DATA_EXTRACTION_TIMEOUT)
+  );
+  
+  const pageData = await Promise.race([pageDataPromise, dataExtractionTimeoutPromise]);
+  console.log(`  ✅ Page data extracted (${pageData.images.length} images, ${pageData.links.length} links)`);
 
-    // Take screenshot
+    // Take screenshot with timeout
     console.log(`  📸 Taking screenshot...`);
-    const screenshot = await page.screenshot({ encoding: 'base64', fullPage: false });
+    const SCREENSHOT_TIMEOUT = 10000; // 10 seconds max for screenshot
+    const screenshotPromise = page.screenshot({ encoding: 'base64', fullPage: false });
+    const screenshotTimeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Screenshot timeout after ${SCREENSHOT_TIMEOUT}ms`)), SCREENSHOT_TIMEOUT)
+    );
+    const screenshot = await Promise.race([screenshotPromise, screenshotTimeoutPromise]);
     console.log(`  ✅ Screenshot captured`);
     
     await browser.close();
@@ -355,6 +394,7 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
   
   let message: any = null;
   const rateLimiter = getRateLimiter();
+  const AI_ANALYSIS_TIMEOUT = 30000; // 30 seconds max for AI analysis
   
   for (const modelName of modelNames) {
     try {
@@ -362,7 +402,9 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
       await rateLimiter.waitIfNeeded();
       
       console.log(`  🤖 Trying model: ${modelName}`);
-      message = await anthropic.messages.create({
+      
+      // Wrap AI API call in timeout to prevent hanging
+      const aiPromise = anthropic.messages.create({
         model: modelName,
         max_tokens: 4000,
         messages: [{
@@ -370,6 +412,12 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
           content: analysisPrompt,
         }],
       });
+      
+      const aiTimeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`AI analysis timeout after ${AI_ANALYSIS_TIMEOUT}ms`)), AI_ANALYSIS_TIMEOUT)
+      );
+      
+      message = await Promise.race([aiPromise, aiTimeoutPromise]);
       
       // Record successful request
       rateLimiter.recordRequest();

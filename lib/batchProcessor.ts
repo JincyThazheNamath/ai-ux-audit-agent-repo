@@ -24,10 +24,10 @@ export interface BatchConfig {
 
 const DEFAULT_CONFIG: BatchConfig = {
   batchSize: 3, // Reduced to avoid overwhelming browser/API
-  delayBetweenBatches: 3000, // 3 seconds between batches (increased for 10-minute window)
-  delayBetweenRequests: 1500, // 1.5 seconds between requests (increased for stability)
-  maxRetries: 3, // Increased retries
-  timeoutPerPage: 90000, // 90 seconds for slow pages (increased for reliability)
+  delayBetweenBatches: 2000, // 2 seconds between batches
+  delayBetweenRequests: 1000, // 1 second between requests
+  maxRetries: 2, // Reduced retries to fail faster and move to next page
+  timeoutPerPage: 45000, // 45 seconds per page (reduced to fail faster and move to next page)
 };
 
 /**
