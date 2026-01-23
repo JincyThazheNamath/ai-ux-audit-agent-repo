@@ -60,3 +60,4 @@ npm run lint   # Should work correctly
 - [Next.js ESLint Configuration](https://nextjs.org/docs/app/building-your-application/configuring/eslint)
 - [npm Deprecation Warnings](https://docs.npmjs.com/cli/v10/commands/npm-install#deprecation-warnings)
 
+

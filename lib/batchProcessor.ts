@@ -129,25 +129,40 @@ async function auditSinglePageWithRetry(
   jobId: string,
   config: BatchConfig
 ): Promise<AuditResult> {
+  console.log(`[auditSinglePageWithRetry] 🚀 Starting audit for ${url}`);
+  console.log(`[auditSinglePageWithRetry] Job ID: ${jobId}`);
+  console.log(`[auditSinglePageWithRetry] Max retries: ${config.maxRetries}`);
+  console.log(`[auditSinglePageWithRetry] Timeout: ${config.timeoutPerPage}ms`);
+  
   let lastError: Error | null = null;
   let lastErrorCategory: { type: FailedPage['errorType'], retryable: boolean, message: string } | null = null;
   
   for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
+    console.log(`[auditSinglePageWithRetry] Attempt ${attempt}/${config.maxRetries} for ${url}`);
+    
     try {
       // Update progress to processing
+      console.log(`[auditSinglePageWithRetry] Updating progress to 'processing'...`);
       await updatePageProgress(jobId, url, 'processing');
       await updateStatus(jobId, 'auditing', url);
+      console.log(`[auditSinglePageWithRetry] ✅ Progress updated`);
       
       // Create timeout promise
       const timeoutPromise = new Promise<AuditResult>((_, reject) => 
         setTimeout(() => reject(new Error(`Timeout: Page took longer than ${config.timeoutPerPage}ms`)), config.timeoutPerPage)
       );
       
+      console.log(`[auditSinglePageWithRetry] Calling auditSinglePage...`);
+      const auditStartTime = Date.now();
+      
       // Race between audit and timeout
       const result = await Promise.race([
         auditSinglePage(url),
         timeoutPromise
       ]);
+      
+      const auditDuration = Date.now() - auditStartTime;
+      console.log(`[auditSinglePageWithRetry] ✅ Audit completed in ${auditDuration}ms`);
       
       return result;
     } catch (error: any) {
@@ -193,17 +208,22 @@ export async function processBatches(
   jobId: string,
   config: BatchConfig = DEFAULT_CONFIG
 ): Promise<{ successful: AuditResult[], failed: FailedPage[] }> {
+  console.log(`[processBatches] 🚀 Starting batch processing`);
+  console.log(`[processBatches] Job ID: ${jobId}`);
+  console.log(`[processBatches] Pages to process: ${pages.length}`);
+  console.log(`[processBatches] Config:`, JSON.stringify(config, null, 2));
+  
   const batches = chunkArray(pages, config.batchSize);
   const successful: AuditResult[] = [];
   const failed: FailedPage[] = [];
   
-  console.log(`📦 Processing ${pages.length} pages in ${batches.length} batches (${config.batchSize} pages per batch)`);
+  console.log(`[processBatches] 📦 Processing ${pages.length} pages in ${batches.length} batches (${config.batchSize} pages per batch)`);
   
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
     const batchNumber = i + 1;
     
-    console.log(`\n🔄 Processing batch ${batchNumber}/${batches.length} (${batch.length} pages)`);
+    console.log(`\n[processBatches] 🔄 Processing batch ${batchNumber}/${batches.length} (${batch.length} pages)`);
     await updateStatus(jobId, 'auditing', `Batch ${batchNumber}/${batches.length}`);
     
     // Process batch sequentially to avoid browser conflicts and rate limits
@@ -218,10 +238,18 @@ export async function processBatches(
         await delay(config.delayBetweenRequests);
       }
       
+      console.log(`[processBatches] 🔍 Starting audit for page ${index + 1}/${batch.length}: ${pageUrl}`);
+      const pageStartTime = Date.now();
+      
       try {
         const result = await auditSinglePageWithRetry(pageUrl, jobId, config);
+        const pageDuration = Date.now() - pageStartTime;
+        console.log(`[processBatches] ✅ Completed audit for ${pageUrl} in ${pageDuration}ms`);
         batchResults.push({ status: 'fulfilled' as const, value: result, url: pageUrl });
       } catch (error: any) {
+        const pageDuration = Date.now() - pageStartTime;
+        console.error(`[processBatches] ❌ Failed audit for ${pageUrl} after ${pageDuration}ms`);
+        console.error(`[processBatches] Error: ${error.message}`);
         batchResults.push({ status: 'rejected' as const, reason: error, url: pageUrl });
       }
     }

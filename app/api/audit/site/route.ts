@@ -195,16 +195,33 @@ export async function POST(request: NextRequest) {
         }));
         
         // Save updated progress - ensure it's persisted
+        console.log(`[Background] 📝 Updating status to 'auditing'...`);
         await updateStatus(jobId, 'auditing', `Found ${actualPageCount} pages, starting audit...`);
         
-        // Double-check it was saved
-        const verifyProgress = await getProgress(jobId);
-        if (!verifyProgress || verifyProgress.status !== 'auditing') {
-          console.error('⚠️ Warning: Status update may not have persisted. Retrying...');
+        // Double-check it was saved with retries
+        let verifyProgress = await getProgress(jobId);
+        let verifyRetries = 0;
+        const maxVerifyRetries = 5;
+        
+        while ((!verifyProgress || verifyProgress.status !== 'auditing') && verifyRetries < maxVerifyRetries) {
+          console.log(`[Background] ⚠️ Status verification failed (attempt ${verifyRetries + 1}/${maxVerifyRetries})`);
+          console.log(`[Background]    Current status: ${verifyProgress?.status || 'null'}`);
+          console.log(`[Background]    Expected status: auditing`);
+          
+          await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms
           await updateStatus(jobId, 'auditing', `Found ${actualPageCount} pages, starting audit...`);
+          verifyProgress = await getProgress(jobId);
+          verifyRetries++;
         }
         
-        console.log('✅ Updated job with', actualPageCount, 'pages');
+        if (!verifyProgress || verifyProgress.status !== 'auditing') {
+          console.error(`[Background] ❌ CRITICAL: Status update failed after ${maxVerifyRetries} retries`);
+          console.error(`[Background]    Final status: ${verifyProgress?.status || 'null'}`);
+          throw new Error('Failed to persist status update to auditing');
+        }
+        
+        console.log(`[Background] ✅ Status verified: ${verifyProgress.status}`);
+        console.log(`[Background] ✅ Updated job with ${actualPageCount} pages`);
         await debugProgressStore();
 
         // Step 2: Process pages in batches (or use mock data if enabled)
@@ -227,8 +244,20 @@ export async function POST(request: NextRequest) {
           }
         } else {
           console.log(`🔄 Starting batch processing for ${actualPageCount} pages...`);
+          console.log(`   Page URLs: ${pageUrls.slice(0, actualPageCount).join(', ')}`);
+          
+          // Verify status is 'auditing' before starting batch processing
+          const preBatchStatus = await getProgress(jobId);
+          if (!preBatchStatus) {
+            console.error('[Background] ❌ CRITICAL: Cannot get progress before batch processing');
+            throw new Error('Progress not found before batch processing');
+          }
+          console.log(`[Background] ✅ Pre-batch status verified: ${preBatchStatus.status}`);
+          console.log(`[Background] ✅ Pre-batch total pages: ${preBatchStatus.totalPages}`);
+          console.log(`[Background] ✅ Pre-batch page results count: ${preBatchStatus.pageResults.length}`);
           
           try {
+            console.log(`[Background] 🔄 Calling processBatches with ${pageUrls.slice(0, actualPageCount).length} pages...`);
             const batchResult = await processBatches(
               pageUrls.slice(0, actualPageCount),
               jobId,
@@ -244,14 +273,27 @@ export async function POST(request: NextRequest) {
             successful = batchResult.successful;
             failed = batchResult.failed;
             
-            console.log(`✅ Batch processing completed: ${successful.length} successful, ${failed.length} failed`);
+            console.log(`[Background] ✅ Batch processing completed: ${successful.length} successful, ${failed.length} failed`);
+            
+            // Verify status after batch processing
+            const postBatchStatus = await getProgress(jobId);
+            if (postBatchStatus) {
+              console.log(`[Background] ✅ Post-batch status: ${postBatchStatus.status}`);
+              console.log(`[Background] ✅ Post-batch completed pages: ${postBatchStatus.completedPages}`);
+            }
           } catch (batchError: any) {
-            console.error('❌ Batch processing error:', batchError);
-            console.error('Error stack:', batchError?.stack);
+            console.error('[Background] ❌ Batch processing error:', batchError);
+            console.error('[Background] Error name:', batchError?.name);
+            console.error('[Background] Error message:', batchError?.message);
+            console.error('[Background] Error stack:', batchError?.stack);
+            
+            // Update status to indicate batch processing failed
+            await updateStatus(jobId, 'auditing', 'Batch processing failed - marking pages as failed');
             
             // Mark all pending pages as failed
             const progress = await getProgress(jobId);
             if (progress) {
+              console.log(`[Background] Marking ${progress.pageResults.length} pages as failed...`);
               for (const page of progress.pageResults) {
                 if (page.status === 'pending' || page.status === 'processing') {
                   await updatePageProgress(jobId, page.url, 'failed');
@@ -261,7 +303,14 @@ export async function POST(request: NextRequest) {
             
             // If no successful audits, we'll fall back to mock data below
             if (successful.length === 0) {
-              console.log('⚠️ All audits failed, will fall back to mock data');
+              console.log('[Background] ⚠️ All audits failed, will fall back to mock data');
+            }
+            
+            // Re-throw to be caught by outer error handler if needed
+            // But don't throw if we have successful audits (partial success)
+            if (successful.length === 0) {
+              // Don't throw - let it fall through to mock data fallback
+              console.log('[Background] ⚠️ No successful audits, will use fallback strategy');
             }
           }
         }
