@@ -149,23 +149,59 @@ async function initializeKv() {
         // Connect lazily on first use
         let connected = false;
         let connectionAttempted = false;
+        let connectionError: Error | null = null;
+        
         async function ensureConnected() {
+          // If already connected, return immediately
+          if (connected) {
+            return;
+          }
+          
+          // If connection was attempted and failed, allow retry (for serverless environments)
+          if (connectionAttempted && connectionError) {
+            console.log('🔄 Retrying Redis connection (previous attempt failed)...');
+            connectionAttempted = false; // Allow retry
+            connectionError = null;
+          }
+          
           if (!connected && !connectionAttempted) {
             connectionAttempted = true;
             try {
               console.log('🔌 Attempting Redis connection...');
-              await redis.connect();
+              console.log('   REDIS_URL present:', !!process.env.REDIS_URL);
+              
+              // Set a connection timeout
+              const connectPromise = redis.connect();
+              const timeoutPromise = new Promise<never>((_, reject) => 
+                setTimeout(() => reject(new Error('Redis connection timeout after 10 seconds')), 10000)
+              );
+              
+              await Promise.race([connectPromise, timeoutPromise]);
               connected = true;
               console.log('✅ Redis connected successfully');
+              
+              // Test connection with a ping
+              try {
+                const pingResult = await redis.ping();
+                console.log('✅ Redis ping successful:', pingResult);
+              } catch (pingError: any) {
+                console.warn('⚠️ Redis ping failed, but connection seems OK:', pingError.message);
+              }
             } catch (err: any) {
+              connectionError = err;
+              connected = false;
               console.error('❌ Failed to connect to Redis:', err.message);
               console.error('   Error code:', err.code);
               console.error('   Error name:', err.name);
               console.error('   Full error:', err);
-              throw err;
+              // Don't throw - allow fallback to in-memory storage
+              // The error will be logged and the function will continue
             }
-          } else if (!connected && connectionAttempted) {
-            throw new Error('Redis connection previously failed');
+          }
+          
+          // If still not connected after attempt, throw error
+          if (!connected && connectionAttempted) {
+            throw connectionError || new Error('Redis connection failed');
           }
         }
       
@@ -297,10 +333,34 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
   // CRITICAL: Store in KV if available (required for serverless persistence)
   if (useKv && kv) {
     try {
-      await kv.set(`audit:progress:${jobId}`, JSON.stringify(progress), { ex: 3600 }); // Expire after 1 hour
-      console.log(`📝 Stored progress in KV: ${jobId}`);
+      const kvKey = `audit:progress:${jobId}`;
+      const progressJson = JSON.stringify(progress);
+      
+      console.log(`📝 Storing progress in KV: ${jobId}`);
+      console.log(`   KV key: ${kvKey}`);
+      console.log(`   Data size: ${progressJson.length} bytes`);
+      
+      await kv.set(kvKey, progressJson, { ex: 3600 }); // Expire after 1 hour
+      console.log(`✅ Stored progress in KV: ${jobId}`);
+      
+      // Verify it was saved by reading it back
+      try {
+        const verifyData = await kv.get(kvKey) as string | null;
+        if (verifyData) {
+          console.log(`✅ Verified progress saved to KV: ${jobId} (${verifyData.length} bytes)`);
+        } else {
+          console.error(`❌ CRITICAL: Progress not found in KV after save: ${jobId}`);
+          console.error(`   This indicates a Redis write issue`);
+        }
+      } catch (verifyError: any) {
+        console.error(`⚠️ Failed to verify KV save:`, verifyError.message);
+        // Continue anyway - the save might have succeeded
+      }
     } catch (kvError: any) {
-      console.error('⚠️ Failed to store in KV:', kvError.message);
+      console.error('❌ Failed to store in KV:', kvError.message);
+      console.error('   Error code:', kvError.code);
+      console.error('   Error name:', kvError.name);
+      console.error('   Error stack:', kvError.stack);
       // Even if KV fails, continue with in-memory storage for dev
       console.warn('⚠️ Progress will only be available in current instance (not persistent in serverless)');
     }
@@ -587,9 +647,33 @@ export async function getAllJobs(): Promise<string[]> {
   await initializeKv();
   
   if (useKv && kv) {
-    const keys = await kv.keys('audit:*') as string[];
-    return keys.map((key: string) => key.replace('audit:', ''));
+    try {
+      const keys = await kv.keys('audit:*') as string[];
+      console.log(`[getAllJobs] Found ${keys.length} keys in KV matching 'audit:*'`);
+      console.log(`[getAllJobs] Keys:`, keys.slice(0, 10));
+      
+      // Extract jobId from keys like "audit:progress:jobId"
+      const jobIds = keys
+        .map((key: string) => {
+          // Key format: audit:progress:${jobId}
+          if (key.startsWith('audit:progress:')) {
+            return key.replace('audit:progress:', '');
+          }
+          // Fallback: remove 'audit:' prefix (for any other audit:* keys)
+          return key.replace('audit:', '');
+        })
+        .filter((id: string) => id.length > 0); // Filter out empty strings
+      
+      console.log(`[getAllJobs] Extracted ${jobIds.length} job IDs:`, jobIds.slice(0, 10));
+      return jobIds;
+    } catch (error: any) {
+      console.error('[getAllJobs] Failed to get keys from KV:', error.message);
+      console.error('[getAllJobs] Error:', error);
+      // Fallback to in-memory store
+      return Array.from(progressStore.keys());
+    }
   } else {
+    console.log(`[getAllJobs] KV not available, using in-memory store (${progressStore.size} jobs)`);
     return Array.from(progressStore.keys());
   }
 }

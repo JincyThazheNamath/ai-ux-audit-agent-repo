@@ -564,15 +564,30 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Verify job exists before returning (with multiple attempts)
+    // CRITICAL: Verify job exists in Redis/KV before returning (with multiple attempts)
+    // This ensures the job is persisted and can be retrieved by the progress API
     let verifyProgress = await getProgress(jobId);
     let verifyAttempts = 0;
-    const maxVerifyAttempts = 5;
+    const maxVerifyAttempts = 10; // Increased retries for Redis latency
     
     while (!verifyProgress && verifyAttempts < maxVerifyAttempts) {
       verifyAttempts++;
       console.log(`   Verification attempt ${verifyAttempts}/${maxVerifyAttempts}...`);
-      await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
+      
+      // Wait progressively longer (exponential backoff)
+      const waitTime = Math.min(100 * Math.pow(1.5, verifyAttempts - 1), 1000);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      
+      // Try to re-save the job if it's not found
+      if (verifyAttempts === 3 || verifyAttempts === 6) {
+        console.log(`   Re-saving job to KV on attempt ${verifyAttempts}...`);
+        const currentProgress = progressStore.get(jobId);
+        if (currentProgress) {
+          // Force save to KV
+          await updateStatus(jobId, currentProgress.status, currentProgress.currentPage);
+        }
+      }
+      
       verifyProgress = await getProgress(jobId);
       
       if (verifyProgress) {
@@ -582,17 +597,44 @@ export async function POST(request: NextRequest) {
     }
     
     if (!verifyProgress) {
-      console.error('❌ CRITICAL: Failed to create progress tracker for job:', jobId);
+      console.error('❌ CRITICAL: Failed to verify job in Redis/KV after', maxVerifyAttempts, 'attempts');
+      console.error('   Job ID:', jobId);
+      
+      // Check Redis/KV status
+      const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+      const hasRedisUrl = !!process.env.REDIS_URL;
+      const hasKvRest = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+      
       await debugProgressStore();
-      return NextResponse.json(
-        { error: 'Failed to initialize audit job' },
-        { status: 500 }
-      );
+      
+      if (isProduction && !hasRedisUrl && !hasKvRest) {
+        return NextResponse.json(
+          { 
+            error: 'Failed to persist audit job',
+            message: 'Redis/KV is not configured. Progress tracking requires Redis or KV in production. Please set REDIS_URL or KV_REST_API_URL in Vercel environment variables.',
+            jobId,
+            debug: {
+              hasRedisUrl: !!hasRedisUrl,
+              hasKvRest: !!hasKvRest,
+              isProduction,
+            }
+          },
+          { status: 500 }
+        );
+      }
+      
+      // Even if verification fails, return jobId so client can try polling
+      // The job might be saved but Redis might have latency
+      console.warn('⚠️ Job verification failed, but returning jobId anyway (may be Redis latency)');
     }
     
     console.log('✅ Job ID ready for polling:', jobId);
-    console.log('   Final verification - Job status:', verifyProgress.status);
-    console.log('   Final verification - Total pages:', verifyProgress.totalPages);
+    if (verifyProgress) {
+      console.log('   Final verification - Job status:', verifyProgress.status);
+      console.log('   Final verification - Total pages:', verifyProgress.totalPages);
+    } else {
+      console.log('   ⚠️ Job verification failed - client should retry polling');
+    }
     await debugProgressStore();
 
     // Return job ID immediately with initial progress for client-side caching
