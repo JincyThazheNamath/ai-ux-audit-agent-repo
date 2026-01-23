@@ -44,7 +44,7 @@ const progressStore = globalForProgressStore.progressStore;
 // Check if we're in Vercel production environment
 const isVercelProduction = process.env.VERCEL === '1' && process.env.NODE_ENV === 'production';
 
-// Redis/KV client (supports both Vercel KV REST API and Redis Labs connection string)
+// Redis client (uses REDIS_URL for Redis Labs connection)
 let kv: any = null;
 let useKv = false;
 let kvInitialized = false;
@@ -205,7 +205,7 @@ async function initializeKv() {
           }
         }
       
-      // Create a compatible interface that matches @vercel/kv API
+      // Create a compatible interface for Redis operations
       kv = {
         async get(key: string) {
           await ensureConnected();
@@ -245,24 +245,15 @@ async function initializeKv() {
       }
     }
     
-    // Fallback: Try Vercel KV REST API format (if REDIS_URL not available)
-    if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-      const kvModule = require('@vercel/kv');
-      kv = kvModule.kv || kvModule.default || kvModule;
-      useKv = true;
-      kvInitialized = true;
-      console.log('✅ Vercel KV initialized (REST API) for persistent storage');
-      return;
-    }
-    
     // Check if we're in production and provide helpful guidance
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
     
     if (isProduction) {
-      console.error('❌ CRITICAL: No Redis configuration found in production!');
+      console.error('❌ CRITICAL: REDIS_URL is not configured in production!');
       console.error('   Please set REDIS_URL environment variable in Vercel');
       console.error('   → Go to Vercel Dashboard → Settings → Environment Variables');
       console.error('   → Add REDIS_URL with your Redis Labs connection string');
+      console.error('   Example: redis://default:password@host:port');
       console.error('   Progress tracking will NOT persist across serverless invocations without Redis');
     } else {
       console.log('⚠️ REDIS_URL is not set');
@@ -369,14 +360,14 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
     if (isProduction) {
       const hasRedisUrl = !!process.env.REDIS_URL;
-      const hasKvRest = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
       
-      if (!hasRedisUrl && !hasKvRest) {
-        console.error('❌ CRITICAL: Redis/KV not configured in production!');
+      if (!hasRedisUrl) {
+        console.error('❌ CRITICAL: REDIS_URL is not configured in production!');
         console.error('   Progress will NOT persist across serverless invocations');
-        console.error('   Please set REDIS_URL (for Redis Labs) or KV_REST_API_URL + KV_REST_API_TOKEN (for Vercel KV)');
-        console.error('   See VERCEL_KV_SETUP.md for instructions');
-      } else if (hasRedisUrl) {
+        console.error('   Please set REDIS_URL environment variable in Vercel');
+        console.error('   → Go to Vercel Dashboard → Settings → Environment Variables');
+        console.error('   → Add REDIS_URL with your Redis Labs connection string');
+      } else {
         console.log('⚠️ REDIS_URL is set but Redis connection not initialized yet');
         console.log('   Connection will be established on first use');
       }

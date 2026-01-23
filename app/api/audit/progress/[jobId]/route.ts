@@ -111,33 +111,27 @@ export async function GET(
         requestedLength: jobId.length,
       })));
       
-      // If no jobs exist, check if we're in production without KV
+      // If no jobs exist, check if we're in production without Redis
       const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
-      const hasVercelKv = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN;
-      const hasRedisUrl = process.env.REDIS_URL;
-      const hasKv = hasVercelKv || hasRedisUrl;
+      const hasRedisUrl = !!process.env.REDIS_URL;
       
-      console.log('   KV Status check:');
-      console.log('     - Vercel KV (KV_REST_API_URL):', !!hasVercelKv);
+      console.log('   Redis Status check:');
       console.log('     - Redis Labs (REDIS_URL):', !!hasRedisUrl);
-      console.log('     - Has any KV configured:', hasKv);
       
       if (availableJobs.length === 0) {
-        if (isProduction && !hasKv) {
+        if (isProduction && !hasRedisUrl) {
           return NextResponse.json({ 
             error: 'Job not found',
             jobId,
-            message: 'Redis/KV is not configured in production. Progress tracking requires Redis or KV to persist across serverless invocations. Please configure REDIS_URL or KV_REST_API_URL (see VERCEL_KV_SETUP.md) or the job may have been created in a different serverless instance.',
+            message: 'REDIS_URL is not configured in production. Progress tracking requires Redis to persist across serverless invocations. Please configure REDIS_URL in Vercel (Settings → Environment Variables) or the job may have been created in a different serverless instance.',
             debug: {
-              reason: 'No jobs found in progress tracker - Redis/KV not configured',
+              reason: 'No jobs found in progress tracker - REDIS_URL not configured',
               storeSize: availableJobs.length,
               extractedJobId: jobId,
               isProduction,
-              hasVercelKv: !!hasVercelKv,
-              hasRedisUrl: !!hasRedisUrl,
-              hasKv: false,
+              hasRedisUrl: false,
             },
-            fix: 'Configure Redis/KV environment variables. Set REDIS_URL (for Redis Labs) or KV_REST_API_URL + KV_REST_API_TOKEN (for Vercel KV) in your Vercel project settings'
+            fix: 'Configure REDIS_URL environment variable in your Vercel project settings (Settings → Environment Variables)'
           }, { status: 404 });
         }
         

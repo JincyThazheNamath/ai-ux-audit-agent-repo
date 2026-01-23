@@ -80,22 +80,19 @@ export async function POST(request: NextRequest) {
       console.error('❌ CRITICAL: Job not found immediately after creation, even after retries');
       await debugProgressStore();
       
-      // Check if we're in production without KV
+      // Check if we're in production without Redis
       const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
-      const hasVercelKv = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN;
-      const hasRedisUrl = process.env.REDIS_URL;
-      const hasKv = hasVercelKv || hasRedisUrl;
+      const hasRedisUrl = !!process.env.REDIS_URL;
       
-      if (isProduction && !hasKv) {
+      if (isProduction && !hasRedisUrl) {
         return NextResponse.json(
           { 
             error: 'Failed to initialize audit job',
-            message: 'Redis/KV is not configured. Progress tracking requires Redis or KV in production. Set REDIS_URL (for Redis Labs) or KV_REST_API_URL + KV_REST_API_TOKEN (for Vercel KV). See VERCEL_KV_SETUP.md for setup instructions.',
+            message: 'REDIS_URL is not configured. Progress tracking requires Redis in production. Please set REDIS_URL environment variable in Vercel (Settings → Environment Variables).',
             jobId,
             debug: {
-              hasVercelKv: !!hasVercelKv,
-              hasRedisUrl: !!hasRedisUrl,
-              hasKv: false,
+              hasRedisUrl: false,
+              isProduction,
             }
           },
           { status: 500 }
@@ -576,25 +573,23 @@ export async function POST(request: NextRequest) {
     }
     
     if (!verifyProgress) {
-      console.error('❌ CRITICAL: Failed to verify job in Redis/KV after', maxVerifyAttempts, 'attempts');
+      console.error('❌ CRITICAL: Failed to verify job in Redis after', maxVerifyAttempts, 'attempts');
       console.error('   Job ID:', jobId);
       
-      // Check Redis/KV status
+      // Check Redis status
       const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
       const hasRedisUrl = !!process.env.REDIS_URL;
-      const hasKvRest = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
       
       await debugProgressStore();
       
-      if (isProduction && !hasRedisUrl && !hasKvRest) {
+      if (isProduction && !hasRedisUrl) {
         return NextResponse.json(
           { 
             error: 'Failed to persist audit job',
-            message: 'Redis/KV is not configured. Progress tracking requires Redis or KV in production. Please set REDIS_URL or KV_REST_API_URL in Vercel environment variables.',
+            message: 'REDIS_URL is not configured. Progress tracking requires Redis in production. Please set REDIS_URL environment variable in Vercel (Settings → Environment Variables).',
             jobId,
             debug: {
-              hasRedisUrl: !!hasRedisUrl,
-              hasKvRest: !!hasKvRest,
+              hasRedisUrl: false,
               isProduction,
             }
           },
