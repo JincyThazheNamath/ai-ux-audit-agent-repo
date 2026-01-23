@@ -416,23 +416,77 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
     try {
       const content = message.content[0];
       if (content.type === 'text') {
-        const jsonMatch = content.text.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
+        let jsonString = '';
+        
+        // Strategy 1: Try to extract JSON from markdown code blocks
+        const codeBlockMatch = content.text.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
+        if (codeBlockMatch) {
+          jsonString = codeBlockMatch[1];
+          console.log('  📝 Extracted JSON from markdown code block');
+        } else {
+          // Strategy 2: Try to find JSON array in the text
+          const jsonMatch = content.text.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            jsonString = jsonMatch[0];
+            console.log('  📝 Extracted JSON from text');
+          }
+        }
+        
+        if (jsonString) {
           // Clean JSON string: remove control characters that cause parsing errors
-          let jsonString = jsonMatch[0];
           // Remove control characters (except newlines, tabs, carriage returns)
           jsonString = jsonString.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
           // Replace any remaining problematic characters
           jsonString = jsonString.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
           
+          // Try to repair common JSON issues
+          // Fix trailing commas before } or ] (most common issue)
+          jsonString = jsonString.replace(/,(\s*[}\]])/g, '$1');
+          // Fix missing commas between objects
+          jsonString = jsonString.replace(/}\s*{/g, '},{');
+          // Fix unescaped quotes in string values (conservative approach)
+          // Only fix quotes that are clearly inside string values and not escaped
+          // Pattern: "key": "value with "unclosed quote" -> "key": "value with \"escaped quote\""
+          // This is a simplified fix - we'll rely on the partial extraction fallback for complex cases
+          
           try {
             findings = JSON.parse(jsonString);
+            console.log(`  ✅ Successfully parsed ${findings.length} findings`);
           } catch (parseError: any) {
-            console.error('Error parsing cleaned JSON:', parseError.message);
-            console.error('JSON string length:', jsonString.length);
-            console.error('JSON preview (first 500 chars):', jsonString.substring(0, 500));
-            throw parseError;
+            console.error('  ❌ Error parsing cleaned JSON:', parseError.message);
+            console.error('  JSON string length:', jsonString.length);
+            
+            // Try to extract partial findings by finding valid JSON objects
+            try {
+              const objectMatches = jsonString.match(/\{[^{}]*"category"[\s\S]*?\}/g);
+              if (objectMatches && objectMatches.length > 0) {
+                console.log(`  🔧 Attempting to extract ${objectMatches.length} individual findings...`);
+                findings = objectMatches.map((objStr: string) => {
+                  try {
+                    // Fix trailing commas in individual objects
+                    const fixed = objStr.replace(/,(\s*})/g, '$1');
+                    return JSON.parse(fixed);
+                  } catch {
+                    return null;
+                  }
+                }).filter((f: any) => f !== null) as AuditFinding[];
+                
+                if (findings.length > 0) {
+                  console.log(`  ✅ Extracted ${findings.length} valid findings from partial JSON`);
+                } else {
+                  throw parseError;
+                }
+              } else {
+                throw parseError;
+              }
+            } catch (extractError) {
+              console.error('  JSON preview (first 500 chars):', jsonString.substring(0, 500));
+              console.error('  JSON around error position:', jsonString.substring(Math.max(0, 2200), 2300));
+              throw parseError;
+            }
           }
+        } else {
+          console.warn('  ⚠️ No JSON array found in AI response');
         }
       }
     } catch (error: any) {
