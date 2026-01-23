@@ -342,10 +342,11 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
 
     // Try multiple model names in order of preference
     const modelNames = [
-      "claude-3-5-sonnet-20241022",   // Primary: Claude 3.5 Sonnet (latest stable)
-      "claude-3-5-haiku-20241022",    // Fast fallback: Claude 3.5 Haiku
-      "claude-3-opus-20240229",       // Legacy fallback: Claude 3 Opus
-      "claude-3-sonnet-20240229",     // Legacy fallback: Claude 3 Sonnet
+      "claude-3-sonnet-20240229",     // Primary: Claude 3 Sonnet (widely available)
+      "claude-3-opus-20240229",       // Fallback: Claude 3 Opus
+      "claude-3-haiku-20240307",      // Fast fallback: Claude 3 Haiku
+      "claude-3-5-sonnet",             // Try Claude 3.5 Sonnet (if available)
+      "claude-3-5-haiku",              // Try Claude 3.5 Haiku (if available)
     ];
 
     let message: any = null;
