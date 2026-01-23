@@ -581,10 +581,15 @@ export async function POST(request: NextRequest) {
       // Try to re-save the job if it's not found
       if (verifyAttempts === 3 || verifyAttempts === 6) {
         console.log(`   Re-saving job to KV on attempt ${verifyAttempts}...`);
-        const currentProgress = progressStore.get(jobId);
+        const currentProgress = await getProgress(jobId);
         if (currentProgress) {
-          // Force save to KV
+          // Force save to KV by updating status
           await updateStatus(jobId, currentProgress.status, currentProgress.currentPage);
+        } else {
+          // If still not found, try to recreate it
+          console.log(`   Job not found, attempting to recreate...`);
+          await createProgressTracker(jobId, 1);
+          await updateStatus(jobId, 'discovering');
         }
       }
       
