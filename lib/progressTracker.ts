@@ -518,6 +518,35 @@ export async function updatePageProgress(
 }
 
 /**
+ * Saves progress to KV (helper function to ensure persistence)
+ */
+async function saveProgressToKv(jobId: string, progress: AuditProgress): Promise<void> {
+  if (useKv && kv) {
+    try {
+      const kvKey = `audit:progress:${jobId}`;
+      const progressJson = JSON.stringify(progress);
+      await kv.set(kvKey, progressJson, { ex: 3600 });
+      console.log(`📝 Saved progress to KV: ${jobId} (status: ${progress.status}, size: ${progressJson.length} bytes)`);
+      
+      // Verify it was saved
+      try {
+        const verifyData = await kv.get(kvKey) as string | null;
+        if (verifyData) {
+          const verifyProgress = JSON.parse(verifyData);
+          const hasFinalResult = !!(verifyProgress as any).finalResult;
+          console.log(`✅ Verified progress saved to KV: ${jobId}, has finalResult: ${hasFinalResult}`);
+        }
+      } catch (verifyError: any) {
+        console.warn(`⚠️ Failed to verify KV save:`, verifyError.message);
+      }
+    } catch (kvError: any) {
+      console.error('⚠️ Failed to save progress to KV:', kvError.message);
+      console.error('   Progress saved in memory only - may not persist across serverless invocations');
+    }
+  }
+}
+
+/**
  * Updates overall status
  */
 export async function updateStatus(jobId: string, status: AuditProgress['status'], currentPage?: string): Promise<void> {
@@ -525,6 +554,7 @@ export async function updateStatus(jobId: string, status: AuditProgress['status'
   await initializeKv();
   
   // Get progress (checking both memory and KV)
+  // CRITICAL: Check memory first to preserve any finalResult that was just set
   let progress = progressStore.get(jobId);
   if (!progress && useKv && kv) {
     try {
@@ -557,30 +587,72 @@ export async function updateStatus(jobId: string, status: AuditProgress['status'
     };
   }
   
+  // Preserve finalResult if it exists (don't overwrite it)
+  const existingFinalResult = (progress as any).finalResult;
+  
   progress.status = status;
   if (currentPage) {
     progress.currentPage = currentPage;
+  }
+  
+  // Restore finalResult if it existed
+  if (existingFinalResult) {
+    (progress as any).finalResult = existingFinalResult;
   }
   
   // Update in memory FIRST (immediate)
   progressStore.set(jobId, progress);
   
   // Also update in KV if available (persistent storage)
-  if (useKv && kv) {
-    try {
-      await kv.set(`audit:progress:${jobId}`, JSON.stringify(progress), { ex: 3600 });
-      console.log(`📝 Updated status in KV: ${jobId} -> ${status}`);
-    } catch (kvError: any) {
-      console.error('⚠️ Failed to update KV:', kvError.message);
-      console.error('   Status update saved in memory only - may not persist across serverless invocations');
-    }
-  } else {
-    // Log warning if KV is not available in production
+  await saveProgressToKv(jobId, progress);
+  
+  // Log warning if KV is not available in production
+  if (!useKv || !kv) {
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
     if (isProduction) {
       console.warn(`⚠️ KV not available - status update saved in memory only for ${jobId}`);
     }
   }
+}
+
+/**
+ * Saves final result to progress tracker
+ * This ensures finalResult is persisted to KV
+ */
+export async function saveFinalResult(jobId: string, finalResult: any): Promise<void> {
+  await initializeKv();
+  
+  // Get current progress
+  let progress = progressStore.get(jobId);
+  if (!progress && useKv && kv) {
+    try {
+      const kvData = await kv.get(`audit:progress:${jobId}`) as string | null;
+      if (kvData) {
+        progress = JSON.parse(kvData) as AuditProgress;
+        progressStore.set(jobId, progress);
+      }
+    } catch (e) {
+      console.error('⚠️ Failed to get progress from KV in saveFinalResult:', e);
+    }
+  }
+  
+  if (!progress) {
+    console.error(`❌ Cannot save finalResult - progress not found for jobId: ${jobId}`);
+    return;
+  }
+  
+  // Set finalResult
+  (progress as any).finalResult = finalResult;
+  progress.status = 'completed';
+  
+  // Save to memory
+  progressStore.set(jobId, progress);
+  
+  // Save to KV
+  await saveProgressToKv(jobId, progress);
+  
+  console.log(`✅ Saved finalResult for jobId: ${jobId}`);
+  console.log(`   finalResult keys:`, Object.keys(finalResult || {}));
 }
 
 /**

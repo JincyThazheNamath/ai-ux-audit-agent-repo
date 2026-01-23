@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { discoverPagesWithDepth } from '../../../../lib/crawler';
 import { aggregateAuditResults, sortPagesBySeverity } from '../../../../lib/batchAuditor';
-import { createProgressTracker, updateStatus, getProgress, getAllJobs, debugProgressStore, updatePageProgress } from '../../../../lib/progressTracker';
+import { createProgressTracker, updateStatus, getProgress, getAllJobs, debugProgressStore, updatePageProgress, saveFinalResult } from '../../../../lib/progressTracker';
 import { processBatches, FailedPage } from '../../../../lib/batchProcessor';
 import { generateMockPages, generateMockAuditForPage } from '../../../../lib/mockData';
 
@@ -160,18 +160,15 @@ export async function POST(request: NextRequest) {
         } catch (discoveryError: any) {
           console.error('❌ Discovery failed or timed out:', discoveryError.message);
           await updateStatus(jobId, 'failed');
-          const finalProgress = await getProgress(jobId);
-          if (finalProgress) {
-            (finalProgress as any).finalResult = {
-              error: `Page discovery failed: ${discoveryError.message}`,
-              errorType: 'discovery_failed',
-              failedPages: [],
-              aggregated: null,
-              sortedPages: [],
-              pageResults: [],
-              isMockData: false,
-            };
-          }
+          await saveFinalResult(jobId, {
+            error: `Page discovery failed: ${discoveryError.message}`,
+            errorType: 'discovery_failed',
+            failedPages: [],
+            aggregated: null,
+            sortedPages: [],
+            pageResults: [],
+            isMockData: false,
+          });
           return;
         }
         
@@ -340,27 +337,22 @@ export async function POST(request: NextRequest) {
           if (hasRetryableErrors && actualPageCount <= 5) {
             // If few pages and retryable errors, suggest retry
             console.log('⚠️ Retryable errors detected. Consider retrying with fewer pages.');
-            await updateStatus(jobId, 'failed');
-            
-            const finalProgress = await getProgress(jobId);
-            if (finalProgress) {
-              (finalProgress as any).finalResult = {
-                error: 'All audits failed with retryable errors',
-                errorType: 'retryable_failures',
-                failedPages: failed.map(f => ({ 
-                  url: f.url, 
-                  error: f.error, 
-                  errorType: f.errorType, 
-                  retryable: f.retryable 
-                })),
-                failureAnalysis: failureReasons,
-                suggestion: 'Try again with fewer pages or check network connectivity',
-                aggregated: null,
-                sortedPages: [],
-                pageResults: [],
-                isMockData: false,
-              };
-            }
+            await saveFinalResult(jobId, {
+              error: 'All audits failed with retryable errors',
+              errorType: 'retryable_failures',
+              failedPages: failed.map(f => ({ 
+                url: f.url, 
+                error: f.error, 
+                errorType: f.errorType, 
+                retryable: f.retryable 
+              })),
+              failureAnalysis: failureReasons,
+              suggestion: 'Try again with fewer pages or check network connectivity',
+              aggregated: null,
+              sortedPages: [],
+              pageResults: [],
+              isMockData: false,
+            });
             return;
           }
           
@@ -388,27 +380,20 @@ export async function POST(request: NextRequest) {
           const aggregated = aggregateAuditResults(mockResults, targetUrl.toString());
           const sortedPages = sortPagesBySeverity(mockResults);
           
-          const finalProgress = await getProgress(jobId);
-          if (finalProgress) {
-            (finalProgress as any).finalResult = {
-              aggregated,
-              sortedPages,
-              pageResults: mockResults,
-              failedPages: failed.map(f => ({ 
-                url: f.url, 
-                error: f.error, 
-                errorType: f.errorType, 
-                retryable: f.retryable 
-              })),
-              failureAnalysis: failureReasons,
-              isMockData: true, // Flag to indicate mock data was used
-              fallbackReason: 'All real audits failed, using mock data for demonstration',
-            };
-            // Save the final result back
-            await updateStatus(jobId, 'completed');
-          } else {
-            await updateStatus(jobId, 'completed');
-          }
+          await saveFinalResult(jobId, {
+            aggregated,
+            sortedPages,
+            pageResults: mockResults,
+            failedPages: failed.map(f => ({ 
+              url: f.url, 
+              error: f.error, 
+              errorType: f.errorType, 
+              retryable: f.retryable 
+            })),
+            failureAnalysis: failureReasons,
+            isMockData: true, // Flag to indicate mock data was used
+            fallbackReason: 'All real audits failed, using mock data for demonstration',
+          });
           console.log(`✅ Full-site audit completed with mock data: ${mockResults.length} pages`);
           return;
         }
@@ -424,32 +409,8 @@ export async function POST(request: NextRequest) {
           console.log(`   Retryable failures: ${retryableFailures.length}`);
           console.log(`   Non-retryable failures: ${nonRetryableFailures.length}`);
           
-          // Store failure analysis in final result
-          const finalProgress = getProgress(jobId);
-          if (finalProgress) {
-            const failureReasons = {
-              browser: failed.filter(f => f.errorType === 'browser').length,
-              network: failed.filter(f => f.errorType === 'network').length,
-              timeout: failed.filter(f => f.errorType === 'timeout').length,
-              api: failed.filter(f => f.errorType === 'api').length,
-              rate_limit: failed.filter(f => f.errorType === 'rate_limit').length,
-              unknown: failed.filter(f => f.errorType === 'unknown').length,
-            };
-            
-            (finalProgress as any).finalResult = {
-              ...(finalProgress as any).finalResult,
-              failedPages: failed.map(f => ({ 
-                url: f.url, 
-                error: f.error, 
-                errorType: f.errorType, 
-                retryable: f.retryable 
-              })),
-              failureAnalysis: failureReasons,
-              partialSuccess: true,
-              retryableFailures: retryableFailures.length,
-              nonRetryableFailures: nonRetryableFailures.length,
-            };
-          }
+          // Failure analysis will be included in final result when saved
+          console.log(`   Failure analysis will be included in final result`);
         }
 
         // Step 3: Aggregate results
@@ -459,21 +420,35 @@ export async function POST(request: NextRequest) {
         const aggregated = aggregateAuditResults(successful, targetUrl.toString());
         const sortedPages = sortPagesBySeverity(successful);
 
-        // Store final result
-        const finalProgress = await getProgress(jobId);
-        if (finalProgress) {
-          (finalProgress as any).finalResult = {
-            aggregated,
-            sortedPages,
-            pageResults: successful,
-            failedPages: failed.map(f => ({ url: f.url, error: f.error, errorType: f.errorType, retryable: f.retryable })),
-            isMockData: forceMockData || false,
+        // Store final result - use saveFinalResult to ensure it's persisted
+        const finalResultData: any = {
+          aggregated,
+          sortedPages,
+          pageResults: successful,
+          failedPages: failed.map(f => ({ url: f.url, error: f.error, errorType: f.errorType, retryable: f.retryable })),
+          isMockData: forceMockData || false,
+        };
+        
+        // Add failure analysis if there were failures
+        if (failed.length > 0) {
+          const failureReasons = {
+            browser: failed.filter(f => f.errorType === 'browser').length,
+            network: failed.filter(f => f.errorType === 'network').length,
+            timeout: failed.filter(f => f.errorType === 'timeout').length,
+            api: failed.filter(f => f.errorType === 'api').length,
+            rate_limit: failed.filter(f => f.errorType === 'rate_limit').length,
+            unknown: failed.filter(f => f.errorType === 'unknown').length,
           };
-          // Save the final result back
-          await updateStatus(jobId, 'completed');
-        } else {
-          await updateStatus(jobId, 'completed');
+          finalResultData.failureAnalysis = failureReasons;
+          if (successful.length > 0) {
+            finalResultData.partialSuccess = true;
+            const retryableFailures = failed.filter(f => f.retryable);
+            finalResultData.retryableFailures = retryableFailures.length;
+            finalResultData.nonRetryableFailures = failed.length - retryableFailures.length;
+          }
         }
+        
+        await saveFinalResult(jobId, finalResultData);
         console.log(`[Background] ✅ Full-site audit completed: ${successful.length} successful, ${failed.length} failed`);
         
         // Final status persistence check
@@ -497,7 +472,7 @@ export async function POST(request: NextRequest) {
           const finalProgress = await getProgress(jobId);
           if (finalProgress) {
             // Store error information
-            (finalProgress as any).finalResult = {
+            await saveFinalResult(jobId, {
               error: error.message || 'Unknown error occurred',
               errorType: 'audit_failed',
               errorDetails: {
@@ -515,8 +490,7 @@ export async function POST(request: NextRequest) {
               sortedPages: [],
               pageResults: [],
               isMockData: false,
-            };
-            await updateStatus(jobId, 'failed');
+            });
             console.log('[Background] ✅ Error status saved to KV');
           } else {
             console.error('[Background] ❌ CRITICAL: Cannot update status - progress not found');
