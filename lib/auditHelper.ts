@@ -312,13 +312,10 @@ Return ONLY a valid JSON array of findings. Format:
 Focus on the most impactful issues. Return 8-15 findings total.`;
 
   const modelNames = [
-    "claude-3-7-sonnet-latest",
-    "claude-3-7-haiku-latest",
-    "claude-3-5-sonnet-latest",
-    "claude-3-opus-latest",
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-    "claude-3-5-haiku-20241022"
+    "claude-3-5-sonnet-20241022",   // Primary: Claude 3.5 Sonnet (latest stable)
+    "claude-3-5-haiku-20241022",    // Fast fallback: Claude 3.5 Haiku
+    "claude-3-opus-20240229",       // Legacy fallback: Claude 3 Opus
+    "claude-3-sonnet-20240229",     // Legacy fallback: Claude 3 Sonnet
   ];
 
   // Check API key before making requests
