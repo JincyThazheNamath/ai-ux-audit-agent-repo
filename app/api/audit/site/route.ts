@@ -648,11 +648,16 @@ export async function POST(request: NextRequest) {
       jobId,
       status: 'started',
       message: 'Full-site audit started. Use the jobId to check progress.',
-      initialProgress: {
+      initialProgress: verifyProgress ? {
         status: verifyProgress.status,
         totalPages: verifyProgress.totalPages,
         completedPages: verifyProgress.completedPages,
         percentage: verifyProgress.percentage,
+      } : {
+        status: 'discovering' as const,
+        totalPages: 1,
+        completedPages: 0,
+        percentage: 0,
       },
     });
   } catch (error: any) {
