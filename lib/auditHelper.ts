@@ -138,30 +138,48 @@ export async function auditSinglePage(url: string): Promise<AuditResult> {
     console.log(`  🔍 Starting audit for: ${targetUrl.toString()}`);
     console.log(`  📅 Timestamp: ${new Date().toISOString()}`);
     
-    // Launch browser with retry logic
+    // Launch browser with retry logic and timeout
     console.log(`  🌐 Launching browser...`);
     let browserLaunchAttempts = 0;
     const maxBrowserAttempts = 2;
+    const BROWSER_LAUNCH_TIMEOUT = 30000; // 30 seconds max for browser launch
     
     while (browserLaunchAttempts < maxBrowserAttempts) {
       try {
-        browser = await launchBrowser();
+        // Wrap browser launch in timeout
+        const launchPromise = launchBrowser();
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Browser launch timeout after 30 seconds')), BROWSER_LAUNCH_TIMEOUT)
+        );
+        
+        browser = await Promise.race([launchPromise, timeoutPromise]);
+        console.log(`  ✅ Browser launched successfully on attempt ${browserLaunchAttempts + 1}`);
         break; // Success, exit loop
       } catch (browserError: any) {
         browserLaunchAttempts++;
         console.error(`  ⚠️ Browser launch attempt ${browserLaunchAttempts}/${maxBrowserAttempts} failed: ${browserError.message}`);
+        console.error(`  Error type: ${browserError.name}`);
+        console.error(`  Error code: ${browserError.code || 'N/A'}`);
         
         if (browserLaunchAttempts >= maxBrowserAttempts) {
+          console.error(`  ❌ All browser launch attempts failed`);
+          console.error(`  This is likely a Vercel serverless environment issue`);
+          console.error(`  Check Vercel logs for Chromium initialization errors`);
           throw browserError; // Re-throw if all attempts failed
         }
         
         // Wait before retry
+        console.log(`  ⏳ Waiting 2 seconds before retry...`);
         await new Promise(resolve => setTimeout(resolve, 2000));
         console.log(`  🔄 Retrying browser launch...`);
       }
     }
     
-    console.log(`  ✅ Browser launched successfully`);
+    if (!browser) {
+      throw new Error('Browser launch failed: browser is null after all attempts');
+    }
+    
+    console.log(`  ✅ Browser ready for page navigation`);
     
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080 });

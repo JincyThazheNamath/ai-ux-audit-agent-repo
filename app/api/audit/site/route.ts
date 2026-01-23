@@ -252,7 +252,10 @@ export async function POST(request: NextRequest) {
           
           try {
             console.log(`[Background] 🔄 Calling processBatches with ${pageUrls.slice(0, actualPageCount).length} pages...`);
-            const batchResult = await processBatches(
+            
+            // Wrap batch processing in a timeout to prevent hanging indefinitely
+            const BATCH_PROCESSING_TIMEOUT = 8 * 60 * 1000; // 8 minutes max for batch processing (leaving 2 min buffer)
+            const batchProcessingPromise = processBatches(
               pageUrls.slice(0, actualPageCount),
               jobId,
               {
@@ -263,6 +266,12 @@ export async function POST(request: NextRequest) {
                 timeoutPerPage: 90000, // Increased to 90000ms (90s) for slow pages and 10-minute window
               }
             );
+            
+            const timeoutPromise = new Promise<never>((_, reject) => 
+              setTimeout(() => reject(new Error('Batch processing timeout: Exceeded 8 minutes')), BATCH_PROCESSING_TIMEOUT)
+            );
+            
+            const batchResult = await Promise.race([batchProcessingPromise, timeoutPromise]);
             
             successful = batchResult.successful;
             failed = batchResult.failed;

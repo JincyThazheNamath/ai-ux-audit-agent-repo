@@ -211,6 +211,7 @@ export async function processBatches(
   console.log(`[processBatches] 🚀 Starting batch processing`);
   console.log(`[processBatches] Job ID: ${jobId}`);
   console.log(`[processBatches] Pages to process: ${pages.length}`);
+  console.log(`[processBatches] Environment: ${process.env.VERCEL ? 'VERCEL PRODUCTION' : process.env.NODE_ENV || 'UNKNOWN'}`);
   console.log(`[processBatches] Config:`, JSON.stringify(config, null, 2));
   
   const batches = chunkArray(pages, config.batchSize);
@@ -219,12 +220,28 @@ export async function processBatches(
   
   console.log(`[processBatches] 📦 Processing ${pages.length} pages in ${batches.length} batches (${config.batchSize} pages per batch)`);
   
+  // Update status to show we're starting
+  try {
+    await updateStatus(jobId, 'auditing', 'Starting batch processing...');
+    console.log(`[processBatches] ✅ Status updated to 'auditing'`);
+  } catch (statusError: any) {
+    console.error(`[processBatches] ⚠️ Failed to update status:`, statusError.message);
+    // Continue anyway - status update failure shouldn't stop processing
+  }
+  
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
     const batchNumber = i + 1;
     
     console.log(`\n[processBatches] 🔄 Processing batch ${batchNumber}/${batches.length} (${batch.length} pages)`);
-    await updateStatus(jobId, 'auditing', `Batch ${batchNumber}/${batches.length}`);
+    console.log(`[processBatches] Batch pages: ${batch.join(', ')}`);
+    
+    try {
+      await updateStatus(jobId, 'auditing', `Batch ${batchNumber}/${batches.length}`);
+      console.log(`[processBatches] ✅ Status updated for batch ${batchNumber}`);
+    } catch (statusError: any) {
+      console.error(`[processBatches] ⚠️ Failed to update status for batch ${batchNumber}:`, statusError.message);
+    }
     
     // Process batch sequentially to avoid browser conflicts and rate limits
     // Sequential processing is more reliable than parallel for browser automation
@@ -242,6 +259,9 @@ export async function processBatches(
       const pageStartTime = Date.now();
       
       try {
+        // Update status to show which page we're processing
+        await updateStatus(jobId, 'auditing', `Auditing page ${index + 1}/${batch.length}: ${pageUrl}`);
+        
         const result = await auditSinglePageWithRetry(pageUrl, jobId, config);
         const pageDuration = Date.now() - pageStartTime;
         console.log(`[processBatches] ✅ Completed audit for ${pageUrl} in ${pageDuration}ms`);
@@ -249,7 +269,15 @@ export async function processBatches(
       } catch (error: any) {
         const pageDuration = Date.now() - pageStartTime;
         console.error(`[processBatches] ❌ Failed audit for ${pageUrl} after ${pageDuration}ms`);
-        console.error(`[processBatches] Error: ${error.message}`);
+        console.error(`[processBatches] Error name: ${error.name}`);
+        console.error(`[processBatches] Error message: ${error.message}`);
+        console.error(`[processBatches] Error stack: ${error.stack}`);
+        
+        // Check if it's a browser launch error
+        if (error.message?.includes('browser') || error.message?.includes('Chromium') || error.message?.includes('executable')) {
+          console.error(`[processBatches] ⚠️ Browser launch error detected - this may affect all subsequent pages`);
+        }
+        
         batchResults.push({ status: 'rejected' as const, reason: error, url: pageUrl });
       }
     }
