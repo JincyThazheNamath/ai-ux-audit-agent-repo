@@ -229,58 +229,97 @@ export async function processBatches(
     // Continue anyway - status update failure shouldn't stop processing
   }
   
-  for (let i = 0; i < batches.length; i++) {
-    const batch = batches[i];
-    const batchNumber = i + 1;
-    
-    console.log(`\n[processBatches] 🔄 Processing batch ${batchNumber}/${batches.length} (${batch.length} pages)`);
-    console.log(`[processBatches] Batch pages: ${batch.join(', ')}`);
-    
-    try {
-      await updateStatus(jobId, 'auditing', `Batch ${batchNumber}/${batches.length}`);
-      console.log(`[processBatches] ✅ Status updated for batch ${batchNumber}`);
-    } catch (statusError: any) {
-      console.error(`[processBatches] ⚠️ Failed to update status for batch ${batchNumber}:`, statusError.message);
-    }
-    
-    // Process batch sequentially to avoid browser conflicts and rate limits
-    // Sequential processing is more reliable than parallel for browser automation
-    const batchResults = [];
-    
-    for (let index = 0; index < batch.length; index++) {
-      const pageUrl = batch[index];
+  const batchStartTime = Date.now();
+  
+  // Add heartbeat to verify batch processing is running
+  const heartbeatInterval = setInterval(() => {
+    const elapsed = Date.now() - batchStartTime;
+    console.log(`[processBatches] 💓 Heartbeat: Still processing... ${successful.length} completed, ${failed.length} failed (elapsed: ${(elapsed / 1000).toFixed(1)}s)`);
+  }, 30000); // Every 30 seconds
+  
+  try {
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      const batchNumber = i + 1;
       
-      // Add delay between requests (except first)
-      if (index > 0) {
-        await delay(config.delayBetweenRequests);
-      }
-      
-      console.log(`[processBatches] 🔍 Starting audit for page ${index + 1}/${batch.length}: ${pageUrl}`);
-      const pageStartTime = Date.now();
+      console.log(`\n[processBatches] 🔄 Processing batch ${batchNumber}/${batches.length} (${batch.length} pages)`);
+      console.log(`[processBatches] Batch pages: ${batch.join(', ')}`);
+      console.log(`[processBatches] Timestamp: ${new Date().toISOString()}`);
       
       try {
-        // Update status to show which page we're processing
-        await updateStatus(jobId, 'auditing', `Auditing page ${index + 1}/${batch.length}: ${pageUrl}`);
+        await updateStatus(jobId, 'auditing', `Batch ${batchNumber}/${batches.length}`);
+        console.log(`[processBatches] ✅ Status updated for batch ${batchNumber}`);
+      } catch (statusError: any) {
+        console.error(`[processBatches] ⚠️ Failed to update status for batch ${batchNumber}:`, statusError.message);
+      }
+      
+      // Process batch sequentially to avoid browser conflicts and rate limits
+      // Sequential processing is more reliable than parallel for browser automation
+      const batchResults = [];
+      
+      for (let index = 0; index < batch.length; index++) {
+        const pageUrl = batch[index];
         
-        const result = await auditSinglePageWithRetry(pageUrl, jobId, config);
-        const pageDuration = Date.now() - pageStartTime;
-        console.log(`[processBatches] ✅ Completed audit for ${pageUrl} in ${pageDuration}ms`);
-        batchResults.push({ status: 'fulfilled' as const, value: result, url: pageUrl });
-      } catch (error: any) {
-        const pageDuration = Date.now() - pageStartTime;
-        console.error(`[processBatches] ❌ Failed audit for ${pageUrl} after ${pageDuration}ms`);
-        console.error(`[processBatches] Error name: ${error.name}`);
-        console.error(`[processBatches] Error message: ${error.message}`);
-        console.error(`[processBatches] Error stack: ${error.stack}`);
-        
-        // Check if it's a browser launch error
-        if (error.message?.includes('browser') || error.message?.includes('Chromium') || error.message?.includes('executable')) {
-          console.error(`[processBatches] ⚠️ Browser launch error detected - this may affect all subsequent pages`);
+        // Add delay between requests (except first)
+        if (index > 0) {
+          await delay(config.delayBetweenRequests);
         }
         
-        batchResults.push({ status: 'rejected' as const, reason: error, url: pageUrl });
+        console.log(`[processBatches] 🔍 Starting audit for page ${index + 1}/${batch.length}: ${pageUrl}`);
+        console.log(`[processBatches] Page start timestamp: ${new Date().toISOString()}`);
+        const pageStartTime = Date.now();
+        
+        // Add a watchdog timer to detect if page audit hangs
+        let pageAuditCompleted = false;
+        const watchdogTimer = setTimeout(() => {
+          if (!pageAuditCompleted) {
+            console.error(`[processBatches] ⚠️ WATCHDOG: Page audit for ${pageUrl} is taking longer than expected (${config.timeoutPerPage}ms)`);
+            console.error(`[processBatches] ⚠️ This may indicate a hang in browser launch or page navigation`);
+          }
+        }, config.timeoutPerPage + 10000); // 10 seconds after timeout
+        
+        try {
+          // Update status to show which page we're processing
+          await updateStatus(jobId, 'auditing', `Auditing page ${index + 1}/${batch.length}: ${pageUrl}`);
+          
+          // Wrap auditSinglePageWithRetry in an additional timeout wrapper for extra safety
+          const auditPromise = auditSinglePageWithRetry(pageUrl, jobId, config);
+          const pageTimeoutPromise = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error(`Page audit timeout: ${pageUrl} took longer than ${config.timeoutPerPage}ms`)), config.timeoutPerPage)
+          );
+          
+          const result = await Promise.race([auditPromise, pageTimeoutPromise]);
+          pageAuditCompleted = true;
+          clearTimeout(watchdogTimer);
+          
+          const pageDuration = Date.now() - pageStartTime;
+          console.log(`[processBatches] ✅ Completed audit for ${pageUrl} in ${pageDuration}ms`);
+          console.log(`[processBatches] Page completion timestamp: ${new Date().toISOString()}`);
+          batchResults.push({ status: 'fulfilled' as const, value: result, url: pageUrl });
+        } catch (error: any) {
+          pageAuditCompleted = true;
+          clearTimeout(watchdogTimer);
+          
+          const pageDuration = Date.now() - pageStartTime;
+          console.error(`[processBatches] ❌ Failed audit for ${pageUrl} after ${pageDuration}ms`);
+          console.error(`[processBatches] Error name: ${error.name}`);
+          console.error(`[processBatches] Error message: ${error.message}`);
+          console.error(`[processBatches] Error stack: ${error.stack?.split('\n').slice(0, 5).join('\n')}`);
+          
+          // Check if it's a browser launch error
+          if (error.message?.includes('browser') || error.message?.includes('Chromium') || error.message?.includes('executable')) {
+            console.error(`[processBatches] ⚠️ Browser launch error detected - this may affect all subsequent pages`);
+            console.error(`[processBatches] ⚠️ Consider checking Vercel Chromium configuration`);
+          }
+          
+          // Check if it's a timeout
+          if (error.message?.includes('timeout') || error.message?.includes('Timeout')) {
+            console.error(`[processBatches] ⚠️ Timeout detected - page took too long to process`);
+          }
+          
+          batchResults.push({ status: 'rejected' as const, reason: error, url: pageUrl });
+        }
       }
-    }
     
     // Process results (using for...of to support async/await)
     for (const result of batchResults) {
@@ -302,14 +341,21 @@ export async function processBatches(
       }
     }
     
-    // Delay between batches (except last)
-    if (i < batches.length - 1) {
-      console.log(`  ⏳ Waiting ${config.delayBetweenBatches}ms before next batch...`);
-      await delay(config.delayBetweenBatches);
+      // Delay between batches (except last)
+      if (i < batches.length - 1) {
+        console.log(`  ⏳ Waiting ${config.delayBetweenBatches}ms before next batch...`);
+        await delay(config.delayBetweenBatches);
+      }
     }
+  } finally {
+    // Clear heartbeat interval
+    clearInterval(heartbeatInterval);
+    const totalDuration = Date.now() - batchStartTime;
+    console.log(`[processBatches] ⏱️ Total batch processing duration: ${totalDuration}ms (${(totalDuration / 1000).toFixed(1)}s)`);
   }
   
   console.log(`\n✅ Batch processing complete: ${successful.length} successful, ${failed.length} failed`);
+  console.log(`[processBatches] Completion timestamp: ${new Date().toISOString()}`);
   
   return { successful, failed };
 }

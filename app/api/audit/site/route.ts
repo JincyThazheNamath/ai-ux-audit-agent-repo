@@ -252,6 +252,7 @@ export async function POST(request: NextRequest) {
           
           try {
             console.log(`[Background] 🔄 Calling processBatches with ${pageUrls.slice(0, actualPageCount).length} pages...`);
+            console.log(`[Background] Batch processing start timestamp: ${new Date().toISOString()}`);
             
             // Wrap batch processing in a timeout to prevent hanging indefinitely
             const BATCH_PROCESSING_TIMEOUT = 8 * 60 * 1000; // 8 minutes max for batch processing (leaving 2 min buffer)
@@ -267,11 +268,27 @@ export async function POST(request: NextRequest) {
               }
             );
             
+            // Add a progress check after 10 seconds to verify batch processing started
+            const progressCheckTimer = setTimeout(async () => {
+              const checkProgress = await getProgress(jobId);
+              if (checkProgress) {
+                console.log(`[Background] 🔍 Progress check after 10s: status=${checkProgress.status}, completed=${checkProgress.completedPages}/${checkProgress.totalPages}`);
+                if (checkProgress.completedPages === 0 && checkProgress.status === 'auditing') {
+                  console.warn(`[Background] ⚠️ WARNING: Batch processing started but no pages completed after 10 seconds`);
+                  console.warn(`[Background] ⚠️ This may indicate browser launch issues or page navigation hangs`);
+                }
+              }
+            }, 10000);
+            
             const timeoutPromise = new Promise<never>((_, reject) => 
-              setTimeout(() => reject(new Error('Batch processing timeout: Exceeded 8 minutes')), BATCH_PROCESSING_TIMEOUT)
+              setTimeout(() => {
+                clearTimeout(progressCheckTimer);
+                reject(new Error('Batch processing timeout: Exceeded 8 minutes'));
+              }, BATCH_PROCESSING_TIMEOUT)
             );
             
             const batchResult = await Promise.race([batchProcessingPromise, timeoutPromise]);
+            clearTimeout(progressCheckTimer);
             
             successful = batchResult.successful;
             failed = batchResult.failed;
