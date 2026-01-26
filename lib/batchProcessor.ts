@@ -212,13 +212,42 @@ async function auditSinglePageWithRetry(
           await delay(backoffDelay);
         } else {
           // Mark as failed after all retries
-          await updatePageProgress(jobId, url, 'failed');
-          console.error(`   ❌ All retries exhausted for ${url}`);
+          try {
+            await updatePageProgress(jobId, url, 'failed');
+            console.error(`   ❌ All retries exhausted for ${url} - marked as failed`);
+          } catch (updateError: any) {
+            console.error(`   ❌ CRITICAL: Failed to mark ${url} as failed:`, updateError.message);
+            // Try one more time
+            await new Promise(resolve => setTimeout(resolve, 500));
+            try {
+              await updatePageProgress(jobId, url, 'failed');
+              console.log(`   ✅ Retry: Marked ${url} as failed`);
+            } catch (retryError) {
+              console.error(`   ❌ CRITICAL: Retry also failed to mark ${url} as failed`);
+            }
+          }
         }
       }
     }
   } finally {
     if (abortTimeout) clearTimeout(abortTimeout);
+    
+    // CRITICAL: Final safety check - if we're exiting with an error and page is still "processing", mark as failed
+    if (lastError) {
+      try {
+        const { getProgress } = await import('./progressTracker');
+        const progress = await getProgress(jobId);
+        if (progress) {
+          const pageResult = progress.pageResults.find(p => p.url === url);
+          if (pageResult && pageResult.status === 'processing') {
+            console.error(`[auditSinglePageWithRetry] ⚠️ CRITICAL: Page ${url} still in 'processing' state after error - marking as failed`);
+            await updatePageProgress(jobId, url, 'failed');
+          }
+        }
+      } catch (finalCheckError: any) {
+        console.error(`[auditSinglePageWithRetry] ⚠️ Failed final status check:`, finalCheckError.message);
+      }
+    }
   }
 
   // Throw error with categorized information
@@ -335,6 +364,9 @@ export async function processBatches(
           }
         }, config.timeoutPerPage + 10000);
 
+        // Declare timeoutId outside try-catch so it's accessible in both
+        let timeoutId: NodeJS.Timeout | null = null;
+        
         try {
           await updateStatus(jobId, 'auditing', `Auditing page ${index + 1}/${batch.length}: ${pageUrl}`);
 
@@ -346,7 +378,6 @@ export async function processBatches(
           const auditPromise = auditSinglePageWithRetry(pageUrl, jobId, config, abortSignal, browser);
 
           // Timeout handling
-          let timeoutId: NodeJS.Timeout;
           const pageTimeoutPromise = new Promise<never>((_, reject) => {
             timeoutId = setTimeout(() => {
               console.error(`[processBatches] ⚠️ Page audit timeout - aborting: ${pageUrl}`);
@@ -357,7 +388,7 @@ export async function processBatches(
 
           const result = await Promise.race([
             auditPromise.then(r => {
-              clearTimeout(timeoutId);
+              if (timeoutId) clearTimeout(timeoutId);
               return r;
             }),
             pageTimeoutPromise
@@ -365,6 +396,7 @@ export async function processBatches(
 
           pageAuditCompleted = true;
           clearTimeout(watchdogTimer);
+          if (timeoutId) clearTimeout(timeoutId);
 
           const pageDuration = Date.now() - pageStartTime;
           console.log(`[processBatches] ✅ Completed audit for ${pageUrl} in ${pageDuration}ms`);
@@ -372,10 +404,28 @@ export async function processBatches(
         } catch (error: any) {
           pageAuditCompleted = true;
           clearTimeout(watchdogTimer);
+          if (timeoutId) clearTimeout(timeoutId);
 
           const pageDuration = Date.now() - pageStartTime;
           console.error(`[processBatches] ❌ Failed audit for ${pageUrl} after ${pageDuration}ms`);
           console.error(`[processBatches] Error: ${error.message}`);
+          console.error(`[processBatches] Error stack:`, error.stack);
+          
+          // CRITICAL: Ensure page is marked as failed even if update fails
+          try {
+            await updatePageProgress(jobId, pageUrl, 'failed');
+            console.log(`[processBatches] ✅ Marked ${pageUrl} as failed`);
+          } catch (updateError: any) {
+            console.error(`[processBatches] ❌ CRITICAL: Failed to mark ${pageUrl} as failed:`, updateError.message);
+            // Try one more time after a short delay
+            await new Promise(resolve => setTimeout(resolve, 500));
+            try {
+              await updatePageProgress(jobId, pageUrl, 'failed');
+              console.log(`[processBatches] ✅ Retry: Marked ${pageUrl} as failed`);
+            } catch (retryError: any) {
+              console.error(`[processBatches] ❌ CRITICAL: Retry also failed to mark ${pageUrl} as failed`);
+            }
+          }
 
           // If browser crashed or disconnected, try to relaunch for next items
           if (browser && (error.message.includes('Session closed') || error.message.includes('Target closed') || error.message.includes('Protocol error'))) {
