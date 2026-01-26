@@ -17,7 +17,7 @@ export const runtime = 'nodejs';
 
 // Simple UUID generator
 function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     const r = Math.random() * 16 | 0;
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
@@ -27,7 +27,7 @@ function generateUUID(): string {
 export async function POST(request: NextRequest) {
   try {
     const { url, maxPages = 40, maxDepth = 3, useMockData = false } = await request.json();
-    
+
     // Check environment variable for mock data mode
     const forceMockData = process.env.USE_MOCK_DATA === 'true' || useMockData;
 
@@ -46,6 +46,11 @@ export async function POST(request: NextRequest) {
     // Generate job ID
     const jobId = generateUUID();
 
+    // Capture origin for batch processing url construction
+    // This handles non-standard ports (e.g. 3001) automatically
+    const origin = new URL(request.url).origin;
+    console.log(`[Batch] Determined API origin: ${origin}`);
+
     // Initialize progress tracker immediately (before async operation)
     // This ensures the job exists for polling even before discovery starts
     const initialProgress = await createProgressTracker(jobId, 1); // Temporary, will be updated
@@ -54,31 +59,31 @@ export async function POST(request: NextRequest) {
       status: 'pending' as const,
     }];
     await updateStatus(jobId, 'discovering');
-    
+
     // Verify job was created and can be retrieved immediately
     // Add retry logic for KV latency in production
     let verifyJob = await getProgress(jobId);
     let retryCount = 0;
     const maxRetries = 5;
-    
+
     while (!verifyJob && retryCount < maxRetries) {
       console.log(`   Retrying getProgress for jobId: ${jobId}, attempt ${retryCount + 1}/${maxRetries}`);
       await new Promise(resolve => setTimeout(resolve, 200)); // Wait 200ms
       verifyJob = await getProgress(jobId);
       retryCount++;
     }
-    
+
     if (!verifyJob) {
       console.error('❌ CRITICAL: Job not found immediately after creation, even after retries');
       await debugProgressStore();
-      
+
       // Check if we're in production without Redis
       const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
       const hasRedisUrl = !!process.env.REDIS_URL;
-      
+
       if (isProduction && !hasRedisUrl) {
         return NextResponse.json(
-          { 
+          {
             error: 'Failed to initialize audit job',
             message: 'REDIS_URL is not configured. Progress tracking requires Redis in production. Please set REDIS_URL environment variable in Vercel (Settings → Environment Variables).',
             jobId,
@@ -90,16 +95,16 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         );
       }
-      
+
       return NextResponse.json(
-        { 
+        {
           error: 'Failed to initialize audit job',
           jobId
         },
         { status: 500 }
       );
     }
-    
+
     console.log('✅ Job created and verified:', jobId);
     console.log('   Job status:', verifyJob.status);
     console.log('   Total pages:', verifyJob.totalPages);
@@ -118,31 +123,31 @@ export async function POST(request: NextRequest) {
         if (!testProgress) {
           console.error('[Background] ❌ CRITICAL: Cannot get progress after job creation');
         }
-        
+
         console.log(`[Background] Starting full-site audit for ${targetUrl.toString()}...`);
         console.log(`[Background] Job ID: ${jobId}`);
-        
+
         // Step 1: Discover pages
         console.log(`[Background] 🔍 Discovering pages for ${targetUrl.toString()}...`);
         await updateStatus(jobId, 'discovering', 'Starting page discovery...');
-        
+
         // Persist status immediately to ensure it's saved
         const discoverStatusCheck = await getProgress(jobId);
         if (!discoverStatusCheck || discoverStatusCheck.status !== 'discovering') {
           console.error('[Background] ⚠️ Status not persisted, retrying...');
           await updateStatus(jobId, 'discovering', 'Starting page discovery...');
         }
-        
+
         // Add timeout for discovery (60 seconds max)
         const discoveryPromise = discoverPagesWithDepth(targetUrl.toString(), {
           maxPages,
           maxDepth,
         });
-        
-        const timeoutPromise = new Promise<never>((_, reject) => 
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Discovery timeout: Page discovery took longer than 60 seconds')), 60000)
         );
-        
+
         let discoveredPages: Awaited<ReturnType<typeof discoverPagesWithDepth>>;
         try {
           discoveredPages = await Promise.race([discoveryPromise, timeoutPromise]);
@@ -160,12 +165,12 @@ export async function POST(request: NextRequest) {
           });
           return;
         }
-        
+
         const pageUrls = discoveredPages.map(page => page.url);
         const actualPageCount = Math.min(pageUrls.length, maxPages);
-        
+
         console.log(`✅ Discovered ${actualPageCount} pages`);
-        
+
         // Update progress tracker with discovered pages
         let progress = await getProgress(jobId);
         if (!progress) {
@@ -173,365 +178,81 @@ export async function POST(request: NextRequest) {
           // Try to recreate the job
           progress = await createProgressTracker(jobId, actualPageCount);
         }
-        
+
         progress.totalPages = actualPageCount;
         progress.pageResults = pageUrls.slice(0, actualPageCount).map(url => ({
           url,
           status: 'pending' as const,
         }));
-        
+
         // Save updated progress - ensure it's persisted
         console.log(`[Background] 📝 Updating status to 'auditing'...`);
         await updateStatus(jobId, 'auditing', `Found ${actualPageCount} pages, starting audit...`);
-        
+
         // Double-check it was saved with retries
         let verifyProgress = await getProgress(jobId);
         let verifyRetries = 0;
         const maxVerifyRetries = 5;
-        
+
         while ((!verifyProgress || verifyProgress.status !== 'auditing') && verifyRetries < maxVerifyRetries) {
           console.log(`[Background] ⚠️ Status verification failed (attempt ${verifyRetries + 1}/${maxVerifyRetries})`);
           console.log(`[Background]    Current status: ${verifyProgress?.status || 'null'}`);
           console.log(`[Background]    Expected status: auditing`);
-          
+
           await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms
           await updateStatus(jobId, 'auditing', `Found ${actualPageCount} pages, starting audit...`);
           verifyProgress = await getProgress(jobId);
           verifyRetries++;
         }
-        
+
         if (!verifyProgress || verifyProgress.status !== 'auditing') {
           console.error(`[Background] ❌ CRITICAL: Status update failed after ${maxVerifyRetries} retries`);
           console.error(`[Background]    Final status: ${verifyProgress?.status || 'null'}`);
           throw new Error('Failed to persist status update to auditing');
         }
-        
+
         console.log(`[Background] ✅ Status verified: ${verifyProgress.status}`);
         console.log(`[Background] ✅ Updated job with ${actualPageCount} pages`);
         await debugProgressStore();
 
-        // Step 2: Process pages in batches (or use mock data if enabled)
-        
-        let successful: any[] = [];
-        let failed: FailedPage[] = [];
-        
-        if (forceMockData) {
-          console.log(`⚠️ Using mock data mode (testing)`);
-          const mockPages = generateMockPages(targetUrl.toString(), Math.min(actualPageCount, 10));
-          
-          for (let i = 0; i < mockPages.length; i++) {
-            const pageUrl = mockPages[i];
-            await updatePageProgress(jobId, pageUrl, 'processing');
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            const mockResult = generateMockAuditForPage(pageUrl);
-            successful.push(mockResult);
-            await updatePageProgress(jobId, pageUrl, 'completed', mockResult.summary.overallScore);
-          }
-        } else {
-          console.log(`🔄 Starting batch processing for ${actualPageCount} pages...`);
-          console.log(`   Page URLs: ${pageUrls.slice(0, actualPageCount).join(', ')}`);
-          
-          // Verify status is 'auditing' before starting batch processing
-          const preBatchStatus = await getProgress(jobId);
-          if (!preBatchStatus) {
-            console.error('[Background] ❌ CRITICAL: Cannot get progress before batch processing');
-            throw new Error('Progress not found before batch processing');
-          }
-          console.log(`[Background] ✅ Pre-batch status verified: ${preBatchStatus.status}`);
-          console.log(`[Background] ✅ Pre-batch total pages: ${preBatchStatus.totalPages}`);
-          console.log(`[Background] ✅ Pre-batch page results count: ${preBatchStatus.pageResults.length}`);
-          
-          try {
-            // CRITICAL: Test browser launch before starting batch processing (only in production)
-            // Skip in development to avoid blocking if Chrome isn't installed
-            const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
-            
-            if (isProduction) {
-              console.log(`[Background] 🧪 Testing browser launch before batch processing (production mode)...`);
-              try {
-                // Import launchBrowser dynamically to avoid circular dependencies
-                const auditHelper = await import('../../../../lib/auditHelper');
-                const testBrowserPromise = auditHelper.launchBrowser();
-                const testTimeoutPromise = new Promise<never>((_, reject) => 
-                  setTimeout(() => reject(new Error('Browser test timeout after 20 seconds')), 20000)
-                );
-                
-                const testBrowser = await Promise.race([testBrowserPromise, testTimeoutPromise]);
-                await testBrowser.close();
-                console.log(`[Background] ✅ Browser test successful - batch processing can proceed`);
-              } catch (browserTestError: any) {
-                console.error(`[Background] ❌ Browser test failed: ${browserTestError.message}`);
-                console.error(`[Background] ⚠️ Batch processing will likely fail - browser cannot launch`);
-                console.error(`[Background] Error details:`, browserTestError);
-                
-                // Mark all pages as failed immediately
-                const progress = await getProgress(jobId);
-                if (progress) {
-                  console.log(`[Background] Marking ${progress.pageResults.length} pages as failed due to browser test failure...`);
-                  for (const page of progress.pageResults) {
-                    await updatePageProgress(jobId, page.url, 'failed');
-                  }
-                }
-                
-                throw new Error(`Browser launch test failed: ${browserTestError.message}. Cannot proceed with batch processing.`);
-              }
-            } else {
-              console.log(`[Background] ⚠️ Skipping browser test in development mode`);
-            }
-            
-            console.log(`[Background] 🔄 Calling processBatches with ${pageUrls.slice(0, actualPageCount).length} pages...`);
-            console.log(`[Background] Batch processing start timestamp: ${new Date().toISOString()}`);
-            
-            // Wrap batch processing in a timeout to prevent hanging indefinitely
-            const BATCH_PROCESSING_TIMEOUT = 8 * 60 * 1000; // 8 minutes max for batch processing (leaving 2 min buffer)
-            const batchProcessingPromise = processBatches(
-              pageUrls.slice(0, actualPageCount),
-              jobId,
-              {
-                batchSize: 3, // Reduced from 8 to 3 to avoid overwhelming browser/API
-                delayBetweenBatches: 2000, // 2 seconds between batches
-                delayBetweenRequests: 1000, // 1 second between requests
-                maxRetries: 2, // Reduced to fail faster and move to next page
-                timeoutPerPage: 45000, // 45 seconds per page (reduced to fail faster)
-              }
-            );
-            
-            // Add a progress check after 10 seconds to verify batch processing started
-            const progressCheckTimer = setTimeout(async () => {
-              const checkProgress = await getProgress(jobId);
-              if (checkProgress) {
-                console.log(`[Background] 🔍 Progress check after 10s: status=${checkProgress.status}, completed=${checkProgress.completedPages}/${checkProgress.totalPages}`);
-                if (checkProgress.completedPages === 0 && checkProgress.status === 'auditing') {
-                  console.warn(`[Background] ⚠️ WARNING: Batch processing started but no pages completed after 10 seconds`);
-                  console.warn(`[Background] ⚠️ This may indicate browser launch issues or page navigation hangs`);
-                }
-              }
-            }, 10000);
-            
-            const timeoutPromise = new Promise<never>((_, reject) => 
-              setTimeout(() => {
-                clearTimeout(progressCheckTimer);
-                reject(new Error('Batch processing timeout: Exceeded 8 minutes'));
-              }, BATCH_PROCESSING_TIMEOUT)
-            );
-            
-            const batchResult = await Promise.race([batchProcessingPromise, timeoutPromise]);
-            clearTimeout(progressCheckTimer);
-            
-            successful = batchResult.successful;
-            failed = batchResult.failed;
-            
-            console.log(`[Background] ✅ Batch processing completed: ${successful.length} successful, ${failed.length} failed`);
-            
-            // Verify status after batch processing
-            const postBatchStatus = await getProgress(jobId);
-            if (postBatchStatus) {
-              console.log(`[Background] ✅ Post-batch status: ${postBatchStatus.status}`);
-              console.log(`[Background] ✅ Post-batch completed pages: ${postBatchStatus.completedPages}`);
-            }
-          } catch (batchError: any) {
-            console.error('[Background] ❌ Batch processing error:', batchError);
-            console.error('[Background] Error name:', batchError?.name);
-            console.error('[Background] Error message:', batchError?.message);
-            console.error('[Background] Error stack:', batchError?.stack);
-            
-            // Update status to indicate batch processing failed
-            await updateStatus(jobId, 'auditing', 'Batch processing failed - marking pages as failed');
-            
-            // Mark all pending pages as failed
-            const progress = await getProgress(jobId);
-            if (progress) {
-              console.log(`[Background] Marking ${progress.pageResults.length} pages as failed...`);
-              for (const page of progress.pageResults) {
-                if (page.status === 'pending' || page.status === 'processing') {
-                  await updatePageProgress(jobId, page.url, 'failed');
-                }
-              }
-            }
-            
-            // If no successful audits, we'll fall back to mock data below
-            if (successful.length === 0) {
-              console.log('[Background] ⚠️ All audits failed, will fall back to mock data');
-            }
-            
-            // Re-throw to be caught by outer error handler if needed
-            // But don't throw if we have successful audits (partial success)
-            if (successful.length === 0) {
-              // Don't throw - let it fall through to mock data fallback
-              console.log('[Background] ⚠️ No successful audits, will use fallback strategy');
-            }
-          }
-        }
+        // Step 2: Trigger recursive batch processing
+        console.log(`[Background] 🔄 Handing off to batch processor for ${actualPageCount} pages...`);
 
-        // Progressive fallback strategy when audits fail
-        if (successful.length === 0) {
-          console.error('❌ No pages were successfully audited');
-          
-          // Analyze failure reasons
-          const failureReasons = {
-            browser: failed.filter(f => f.errorType === 'browser').length,
-            network: failed.filter(f => f.errorType === 'network').length,
-            timeout: failed.filter(f => f.errorType === 'timeout').length,
-            api: failed.filter(f => f.errorType === 'api').length,
-            rate_limit: failed.filter(f => f.errorType === 'rate_limit').length,
-            unknown: failed.filter(f => f.errorType === 'unknown').length,
-          };
-          
-          console.log('📊 Failure analysis:', failureReasons);
-          
-          // Determine fallback strategy based on failure types
-          const hasRetryableErrors = failureReasons.network > 0 || 
-                                     failureReasons.timeout > 0 || 
-                                     failureReasons.rate_limit > 0 ||
-                                     failureReasons.api > 0;
-          
-          if (hasRetryableErrors && actualPageCount <= 5) {
-            // If few pages and retryable errors, suggest retry
-            console.log('⚠️ Retryable errors detected. Consider retrying with fewer pages.');
-            await saveFinalResult(jobId, {
-              error: 'All audits failed with retryable errors',
-              errorType: 'retryable_failures',
-              failedPages: failed.map(f => ({ 
-                url: f.url, 
-                error: f.error, 
-                errorType: f.errorType, 
-                retryable: f.retryable 
-              })),
-              failureAnalysis: failureReasons,
-              suggestion: 'Try again with fewer pages or check network connectivity',
-              aggregated: null,
-              sortedPages: [],
-              pageResults: [],
-              isMockData: false,
-            });
-            return;
-          }
-          
-          // Fallback to mock data for demonstration/testing
-          console.log('⚠️ Falling back to mock data for testing...');
-          console.log('   This allows you to see the UI/UX even when real audits fail.');
-          
-          // Use mock data as fallback
-          const mockPages = generateMockPages(targetUrl.toString(), Math.min(actualPageCount, 10));
-          const mockResults = [];
-          
-          for (let i = 0; i < mockPages.length; i++) {
-            const pageUrl = mockPages[i];
-            await updatePageProgress(jobId, pageUrl, 'processing');
-            
-            // Simulate processing with realistic timing
-            await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
-            
-            const mockResult = generateMockAuditForPage(pageUrl);
-            mockResults.push(mockResult);
-            await updatePageProgress(jobId, pageUrl, 'completed', mockResult.summary.overallScore);
-          }
-          
-          // Use mock results for aggregation
-          const aggregated = aggregateAuditResults(mockResults, targetUrl.toString());
-          const sortedPages = sortPagesBySeverity(mockResults);
-          
-          await saveFinalResult(jobId, {
-            aggregated,
-            sortedPages,
-            pageResults: mockResults,
-            failedPages: failed.map(f => ({ 
-              url: f.url, 
-              error: f.error, 
-              errorType: f.errorType, 
-              retryable: f.retryable 
-            })),
-            failureAnalysis: failureReasons,
-            isMockData: true, // Flag to indicate mock data was used
-            fallbackReason: 'All real audits failed, using mock data for demonstration',
+        const batchApiUrl = `${origin}/api/audit/batch`;
+        console.log(`[Background] 🔗 Triggering first batch at: ${batchApiUrl}`);
+
+        try {
+          await fetch(batchApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jobId })
           });
-          console.log(`✅ Full-site audit completed with mock data: ${mockResults.length} pages`);
-          return;
-        }
-        
-        // Partial success: Some pages succeeded, some failed
-        if (failed.length > 0 && successful.length > 0) {
-          console.log(`⚠️ Partial success: ${successful.length} succeeded, ${failed.length} failed`);
-          
-          // Analyze which failures are retryable
-          const retryableFailures = failed.filter(f => f.retryable);
-          const nonRetryableFailures = failed.filter(f => !f.retryable);
-          
-          console.log(`   Retryable failures: ${retryableFailures.length}`);
-          console.log(`   Non-retryable failures: ${nonRetryableFailures.length}`);
-          
-          // Failure analysis will be included in final result when saved
-          console.log(`   Failure analysis will be included in final result`);
-        }
-
-        // Step 3: Aggregate results
-        await updateStatus(jobId, 'aggregating');
-        console.log(`📊 Aggregating results from ${successful.length} successful audits...`);
-        
-        const aggregated = aggregateAuditResults(successful, targetUrl.toString());
-        const sortedPages = sortPagesBySeverity(successful);
-
-        // Store final result - use saveFinalResult to ensure it's persisted
-        const finalResultData: any = {
-          aggregated,
-          sortedPages,
-          pageResults: successful,
-          failedPages: failed.map(f => ({ url: f.url, error: f.error, errorType: f.errorType, retryable: f.retryable })),
-          isMockData: forceMockData || false,
-        };
-        
-        // Add failure analysis if there were failures
-        if (failed.length > 0) {
-          const failureReasons = {
-            browser: failed.filter(f => f.errorType === 'browser').length,
-            network: failed.filter(f => f.errorType === 'network').length,
-            timeout: failed.filter(f => f.errorType === 'timeout').length,
-            api: failed.filter(f => f.errorType === 'api').length,
-            rate_limit: failed.filter(f => f.errorType === 'rate_limit').length,
-            unknown: failed.filter(f => f.errorType === 'unknown').length,
-          };
-          finalResultData.failureAnalysis = failureReasons;
-          if (successful.length > 0) {
-            finalResultData.partialSuccess = true;
-            const retryableFailures = failed.filter(f => f.retryable);
-            finalResultData.retryableFailures = retryableFailures.length;
-            finalResultData.nonRetryableFailures = failed.length - retryableFailures.length;
-          }
-        }
-        
-        await saveFinalResult(jobId, finalResultData);
-        console.log(`[Background] ✅ Full-site audit completed: ${successful.length} successful, ${failed.length} failed`);
-        
-        // Final status persistence check
-        const finalStatusCheck = await getProgress(jobId);
-        if (finalStatusCheck && finalStatusCheck.status === 'completed') {
-          console.log(`[Background] ✅ Final status confirmed in KV: ${jobId}`);
-        } else {
-          console.error(`[Background] ⚠️ Final status may not be persisted correctly`);
-          // Force final update
-          await updateStatus(jobId, 'completed');
+          console.log(`[Background] 🚀 First batch triggered successfully`);
+        } catch (triggerError: any) {
+          console.error(`[Background] ❌ Failed to trigger first batch: ${triggerError.message}`);
+          // If trigger fails, we should update status to failed
+          await updateStatus(jobId, 'failed');
+          await saveFinalResult(jobId, {
+            error: `Failed to start batch processing: ${triggerError.message}`,
+            errorType: 'batch_trigger_failed',
+            failedPages: [],
+            aggregated: null,
+            sortedPages: [],
+            pageResults: [],
+            isMockData: false
+          });
         }
       } catch (error: any) {
+        // Global background error handler
         backgroundError = error;
         console.error('[Background] ❌ Full-site audit error:', error);
-        console.error('[Background] Error stack:', error.stack);
-        console.error('[Background] Error message:', error.message);
-        console.error('[Background] Error name:', error.name);
-        
+
         try {
-          // Update status to failed - wrap in try-catch to ensure we don't fail silently
           const finalProgress = await getProgress(jobId);
           if (finalProgress) {
-            // Store error information
             await saveFinalResult(jobId, {
               error: error.message || 'Unknown error occurred',
               errorType: 'audit_failed',
-              errorDetails: {
-                name: error.name,
-                message: error.message,
-                stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-              },
               failedPages: finalProgress.pageResults.filter(p => p.status === 'failed').map(p => ({
                 url: p.url,
                 error: 'Audit process failed',
@@ -543,17 +264,13 @@ export async function POST(request: NextRequest) {
               pageResults: [],
               isMockData: false,
             });
-            console.log('[Background] ✅ Error status saved to KV');
-          } else {
-            console.error('[Background] ❌ CRITICAL: Cannot update status - progress not found');
           }
-        } catch (statusError: any) {
-          console.error('[Background] ❌ CRITICAL: Failed to save error status:', statusError);
-          console.error('[Background] Original error:', error);
+        } catch (e) {
+          console.error('[Background] Failed to save error status:', e);
         }
       }
     })();
-    
+
     // CRITICAL: Use waitUntil to keep function alive after response
     // This ensures Vercel doesn't terminate the background work
     // waitUntil is available in Vercel Pro/Enterprise plans
@@ -578,12 +295,12 @@ export async function POST(request: NextRequest) {
       console.log('   Background work will continue but may be terminated by Vercel after response');
       // Continue anyway - background work may still complete
     }
-    
+
     // CRITICAL FIX: Wait a bit for discovery to start before returning
     // This gives the background function time to initialize
     console.log('⏳ Waiting 3 seconds for discovery to initialize...');
     await new Promise(resolve => setTimeout(resolve, 3000));
-    
+
     const earlyCheck = await getProgress(jobId);
     if (earlyCheck && (earlyCheck.status === 'discovering' || earlyCheck.status === 'auditing')) {
       console.log(`✅ Discovery started successfully - status: ${earlyCheck.status}`);
@@ -596,15 +313,15 @@ export async function POST(request: NextRequest) {
     let verifyProgress = await getProgress(jobId);
     let verifyAttempts = 0;
     const maxVerifyAttempts = 10; // Increased retries for Redis latency
-    
+
     while (!verifyProgress && verifyAttempts < maxVerifyAttempts) {
       verifyAttempts++;
       console.log(`   Verification attempt ${verifyAttempts}/${maxVerifyAttempts}...`);
-      
+
       // Wait progressively longer (exponential backoff)
       const waitTime = Math.min(100 * Math.pow(1.5, verifyAttempts - 1), 1000);
       await new Promise(resolve => setTimeout(resolve, waitTime));
-      
+
       // Try to re-save the job if it's not found
       if (verifyAttempts === 3 || verifyAttempts === 6) {
         console.log(`   Re-saving job to KV on attempt ${verifyAttempts}...`);
@@ -619,28 +336,28 @@ export async function POST(request: NextRequest) {
           await updateStatus(jobId, 'discovering');
         }
       }
-      
+
       verifyProgress = await getProgress(jobId);
-      
+
       if (verifyProgress) {
         console.log(`   ✅ Job verified on attempt ${verifyAttempts}`);
         break;
       }
     }
-    
+
     if (!verifyProgress) {
       console.error('❌ CRITICAL: Failed to verify job in Redis after', maxVerifyAttempts, 'attempts');
       console.error('   Job ID:', jobId);
-      
+
       // Check Redis status
       const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
       const hasRedisUrl = !!process.env.REDIS_URL;
-      
+
       await debugProgressStore();
-      
+
       if (isProduction && !hasRedisUrl) {
         return NextResponse.json(
-          { 
+          {
             error: 'Failed to persist audit job',
             message: 'REDIS_URL is not configured. Progress tracking requires Redis in production. Please set REDIS_URL environment variable in Vercel (Settings → Environment Variables).',
             jobId,
@@ -652,12 +369,12 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         );
       }
-      
+
       // Even if verification fails, return jobId so client can try polling
       // The job might be saved but Redis might have latency
       console.warn('⚠️ Job verification failed, but returning jobId anyway (may be Redis latency)');
     }
-    
+
     console.log('✅ Job ID ready for polling:', jobId);
     if (verifyProgress) {
       console.log('   Final verification - Job status:', verifyProgress.status);
@@ -691,7 +408,7 @@ export async function POST(request: NextRequest) {
     console.error('   Error message:', error?.message);
     console.error('   Error stack:', error?.stack);
     console.error('   Error type:', typeof error);
-    
+
     // Provide more detailed error information
     const errorMessage = error?.message || 'Failed to start full-site audit';
     const errorDetails = {
@@ -702,9 +419,9 @@ export async function POST(request: NextRequest) {
         fullError: error?.toString(),
       }),
     };
-    
+
     return NextResponse.json(
-      { 
+      {
         error: errorMessage,
         details: errorDetails,
         ...(process.env.NODE_ENV === 'development' && {

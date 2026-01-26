@@ -28,9 +28,9 @@ if (!apiKey || apiKey.trim() === '') {
  */
 export async function launchBrowser() {
   const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
-  
+
   console.log(`  [Browser] Environment: ${isProduction ? 'PRODUCTION (Vercel)' : 'DEVELOPMENT'}`);
-  
+
   const launchOptions: any = {
     headless: true,
   };
@@ -43,7 +43,7 @@ export async function launchBrowser() {
         throw new Error('Chromium executable path is null or undefined from @sparticuz/chromium');
       }
       console.log(`  [Browser] ✅ Chromium executable path obtained: ${executablePath.substring(0, 50)}...`);
-      
+
       launchOptions.args = chromium.args || [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -74,7 +74,7 @@ export async function launchBrowser() {
       '--single-process',
       '--disable-gpu',
     ];
-    
+
     if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) {
       launchOptions.executablePath = process.env.CHROME_PATH;
     } else {
@@ -93,7 +93,7 @@ export async function launchBrowser() {
           break;
         }
       }
-      
+
       if (foundPath) {
         launchOptions.executablePath = foundPath;
         console.log(`  ✅ Found Chrome at: ${foundPath}`);
@@ -110,23 +110,23 @@ export async function launchBrowser() {
     const launchTimeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('Browser launch timeout after 30 seconds')), 30000)
     );
-    
+
     const browser = await Promise.race([launchPromise, launchTimeoutPromise]);
     console.log(`  ✅ Browser launched successfully`);
     return browser;
   } catch (error: any) {
     console.error('❌ Browser launch failed:', error.message);
     console.error('   Launch options:', JSON.stringify(launchOptions, null, 2));
-    
+
     if (error.message.includes('executable') || error.message.includes('not found')) {
-      const errorMsg = 
+      const errorMsg =
         'Chrome/Chromium not found. Please install Google Chrome or set CHROME_PATH environment variable.\n' +
         'For testing, you can use mock data by setting USE_MOCK_DATA=true in .env.local\n' +
         `Attempted paths: ${launchOptions.executablePath || 'default channel'}`;
       console.error(`   ${errorMsg}`);
       throw new Error(errorMsg);
     }
-    
+
     // Log full error for debugging
     console.error('   Full error:', error);
     throw error;
@@ -136,107 +136,111 @@ export async function launchBrowser() {
 /**
  * Audits a single page
  */
-export async function auditSinglePage(url: string, abortSignal?: AbortSignal): Promise<AuditResult> {
-  let browser: any = null;
-  
+export async function auditSinglePage(url: string, abortSignal?: AbortSignal, browserInstance?: any): Promise<AuditResult> {
+  let browser: any = browserInstance;
+  let isLocalBrowser = !browserInstance;
+
   try {
     // Check if aborted before starting
     if (abortSignal?.aborted) {
       throw new Error('Audit aborted before starting');
     }
-    
+
     const targetUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
     console.log(`  🔍 Starting audit for: ${targetUrl.toString()}`);
     console.log(`  📅 Timestamp: ${new Date().toISOString()}`);
     console.log(`  🛑 Abort signal: ${abortSignal ? 'monitoring' : 'not provided'}`);
-    
-    // Launch browser with retry logic and timeout
-    console.log(`  🌐 Launching browser...`);
-    let browserLaunchAttempts = 0;
-    const maxBrowserAttempts = 2;
-    const BROWSER_LAUNCH_TIMEOUT = 30000; // 30 seconds max for browser launch
-    
-    while (browserLaunchAttempts < maxBrowserAttempts) {
-      // Check if aborted
-      if (abortSignal?.aborted) {
-        throw new Error('Audit aborted during browser launch');
-      }
-      
-      try {
-        // Wrap browser launch in timeout
-        const launchPromise = launchBrowser();
-        const timeoutPromise = new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('Browser launch timeout after 30 seconds')), BROWSER_LAUNCH_TIMEOUT)
-        );
-        
-        browser = await Promise.race([launchPromise, timeoutPromise]);
-        console.log(`  ✅ Browser launched successfully on attempt ${browserLaunchAttempts + 1}`);
-        break; // Success, exit loop
-      } catch (browserError: any) {
-        browserLaunchAttempts++;
-        console.error(`  ⚠️ Browser launch attempt ${browserLaunchAttempts}/${maxBrowserAttempts} failed: ${browserError.message}`);
-        console.error(`  Error type: ${browserError.name}`);
-        console.error(`  Error code: ${browserError.code || 'N/A'}`);
-        
+    console.log(`  🌐 Browser: ${isLocalBrowser ? 'Launching new instance' : 'Reusing instance'}`);
+
+    if (isLocalBrowser) {
+      // Launch browser with retry logic and timeout
+      console.log(`  🌐 Launching browser...`);
+      let browserLaunchAttempts = 0;
+      const maxBrowserAttempts = 2;
+      const BROWSER_LAUNCH_TIMEOUT = 30000; // 30 seconds max for browser launch
+
+      while (browserLaunchAttempts < maxBrowserAttempts) {
         // Check if aborted
         if (abortSignal?.aborted) {
-          throw new Error('Audit aborted during browser launch retry');
+          throw new Error('Audit aborted during browser launch');
         }
-        
-        if (browserLaunchAttempts >= maxBrowserAttempts) {
-          console.error(`  ❌ All browser launch attempts failed`);
-          console.error(`  This is likely a Vercel serverless environment issue`);
-          console.error(`  Check Vercel logs for Chromium initialization errors`);
-          throw browserError; // Re-throw if all attempts failed
+
+        try {
+          // Wrap browser launch in timeout
+          const launchPromise = launchBrowser();
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Browser launch timeout after 30 seconds')), BROWSER_LAUNCH_TIMEOUT)
+          );
+
+          browser = await Promise.race([launchPromise, timeoutPromise]);
+          console.log(`  ✅ Browser launched successfully on attempt ${browserLaunchAttempts + 1}`);
+          break; // Success, exit loop
+        } catch (browserError: any) {
+          browserLaunchAttempts++;
+          console.error(`  ⚠️ Browser launch attempt ${browserLaunchAttempts}/${maxBrowserAttempts} failed: ${browserError.message}`);
+          console.error(`  Error type: ${browserError.name}`);
+          console.error(`  Error code: ${browserError.code || 'N/A'}`);
+
+          // Check if aborted
+          if (abortSignal?.aborted) {
+            throw new Error('Audit aborted during browser launch retry');
+          }
+
+          if (browserLaunchAttempts >= maxBrowserAttempts) {
+            console.error(`  ❌ All browser launch attempts failed`);
+            console.error(`  This is likely a Vercel serverless environment issue`);
+            console.error(`  Check Vercel logs for Chromium initialization errors`);
+            throw browserError; // Re-throw if all attempts failed
+          }
+
+          // Wait before retry
+          console.log(`  ⏳ Waiting 2 seconds before retry...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          console.log(`  🔄 Retrying browser launch...`);
         }
-        
-        // Wait before retry
-        console.log(`  ⏳ Waiting 2 seconds before retry...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        console.log(`  🔄 Retrying browser launch...`);
       }
     }
-    
+
     if (!browser) {
       throw new Error('Browser launch failed: browser is null after all attempts');
     }
-    
+
     // Check if aborted after browser launch
     if (abortSignal?.aborted) {
-      await browser.close();
+      if (isLocalBrowser) await browser.close();
       throw new Error('Audit aborted after browser launch');
     }
-    
+
     console.log(`  ✅ Browser ready for page navigation`);
-    
+
     // Check if aborted before creating page
     if (abortSignal?.aborted) {
-      await browser.close();
+      if (isLocalBrowser) await browser.close();
       throw new Error('Audit aborted before page creation');
     }
-    
+
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080 });
-    
+
     // Check if aborted before navigation
     if (abortSignal?.aborted) {
-      await browser.close();
+      if (isLocalBrowser) await browser.close();
       throw new Error('Audit aborted before page navigation');
     }
-    
+
     // Navigate to page with aggressive timeouts to prevent hanging
     console.log(`  📄 Loading page: ${targetUrl.toString()}`);
     const PAGE_LOAD_TIMEOUT = 30000; // 30 seconds max for page load (reduced to fail faster)
     const DOM_CONTENT_TIMEOUT = 20000; // 20 seconds for domcontentloaded fallback
-    
+
     try {
       // Use AbortController to ensure we can cancel if needed
       const abortController = new AbortController();
       const timeoutId = setTimeout(() => abortController.abort(), PAGE_LOAD_TIMEOUT);
-      
+
       try {
         // Try domcontentloaded first (faster, more reliable)
-        await page.goto(targetUrl.toString(), { 
+        await page.goto(targetUrl.toString(), {
           waitUntil: 'domcontentloaded',
           timeout: DOM_CONTENT_TIMEOUT
         });
@@ -249,7 +253,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal): P
         // If domcontentloaded fails, try load event (fastest)
         console.log(`  ⚠️ domcontentloaded timeout, trying load event...`);
         try {
-          await page.goto(targetUrl.toString(), { 
+          await page.goto(targetUrl.toString(), {
             waitUntil: 'load',
             timeout: 15000 // 15 seconds max
           });
@@ -257,7 +261,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal): P
         } catch (loadError: any) {
           // Last resort: just navigate without waiting
           console.log(`  ⚠️ load event timeout, navigating without wait...`);
-          await page.goto(targetUrl.toString(), { 
+          await page.goto(targetUrl.toString(), {
             waitUntil: 'commit', // Just wait for navigation to start
             timeout: 10000 // 10 seconds max
           });
@@ -266,9 +270,11 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal): P
         }
       }
     } catch (error: any) {
-      // Ensure browser is closed even on error
+      // Ensure browser is closed even on error (only if local)
       try {
-        await browser.close();
+        if (isLocalBrowser && browser) {
+          await browser.close();
+        }
       } catch (closeError) {
         console.error(`  ⚠️ Error closing browser:`, closeError);
       }
@@ -276,75 +282,75 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal): P
       throw new Error(`Failed to load page: ${error.message}. Page may be slow or inaccessible.`);
     }
 
-  // Extract page data with timeout to prevent hanging
-  console.log(`  📊 Extracting page data...`);
-  const DATA_EXTRACTION_TIMEOUT = 15000; // 15 seconds max for data extraction
-  
-  const pageDataPromise = page.evaluate(() => {
-    const getComputedStyles = (element: Element) => {
-      const styles = window.getComputedStyle(element);
-      return {
-        color: styles.color,
-        backgroundColor: styles.backgroundColor,
-        fontSize: styles.fontSize,
-        fontWeight: styles.fontWeight,
-        fontFamily: styles.fontFamily,
+    // Extract page data with timeout to prevent hanging
+    console.log(`  📊 Extracting page data...`);
+    const DATA_EXTRACTION_TIMEOUT = 15000; // 15 seconds max for data extraction
+
+    const pageDataPromise = page.evaluate(() => {
+      const getComputedStyles = (element: Element) => {
+        const styles = window.getComputedStyle(element);
+        return {
+          color: styles.color,
+          backgroundColor: styles.backgroundColor,
+          fontSize: styles.fontSize,
+          fontWeight: styles.fontWeight,
+          fontFamily: styles.fontFamily,
+        };
       };
-    };
 
-    const images = Array.from(document.querySelectorAll('img')).map(img => ({
-      src: img.src,
-      alt: img.alt || '',
-      hasAlt: !!img.alt,
-    }));
+      const images = Array.from(document.querySelectorAll('img')).map(img => ({
+        src: img.src,
+        alt: img.alt || '',
+        hasAlt: !!img.alt,
+      }));
 
-    const links = Array.from(document.querySelectorAll('a')).map(link => ({
-      href: link.href,
-      text: link.textContent?.trim() || '',
-      hasText: !!(link.textContent?.trim()),
-    }));
+      const links = Array.from(document.querySelectorAll('a')).map(link => ({
+        href: link.href,
+        text: link.textContent?.trim() || '',
+        hasText: !!(link.textContent?.trim()),
+      }));
 
-    const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(h => ({
-      tag: h.tagName.toLowerCase(),
-      text: h.textContent?.trim() || '',
-    }));
+      const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(h => ({
+        tag: h.tagName.toLowerCase(),
+        text: h.textContent?.trim() || '',
+      }));
 
-    const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).map(btn => ({
-      text: btn.textContent?.trim() || '',
-      ariaLabel: btn.getAttribute('aria-label') || '',
-    }));
+      const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).map(btn => ({
+        text: btn.textContent?.trim() || '',
+        ariaLabel: btn.getAttribute('aria-label') || '',
+      }));
 
-    const forms = Array.from(document.querySelectorAll('form, input, textarea, select')).map(form => ({
-      type: form.tagName.toLowerCase(),
-      label: form.getAttribute('aria-label') || 
-             (form.previousElementSibling?.textContent?.trim()) || '',
-      required: form.hasAttribute('required'),
-    }));
+      const forms = Array.from(document.querySelectorAll('form, input, textarea, select')).map(form => ({
+        type: form.tagName.toLowerCase(),
+        label: form.getAttribute('aria-label') ||
+          (form.previousElementSibling?.textContent?.trim()) || '',
+        required: form.hasAttribute('required'),
+      }));
 
-    const textElements = Array.from(document.querySelectorAll('p, span, div, a, button, h1, h2, h3, h4, h5, h6'))
-      .slice(0, 20)
-      .map(el => getComputedStyles(el));
+      const textElements = Array.from(document.querySelectorAll('p, span, div, a, button, h1, h2, h3, h4, h5, h6'))
+        .slice(0, 20)
+        .map(el => getComputedStyles(el));
 
-    return {
-      title: document.title,
-      metaDescription: document.querySelector('meta[name="description"]')?.getAttribute('content') || '',
-      url: window.location.href,
-      images,
-      links,
-      headings,
-      buttons,
-      forms,
-      textStyles: textElements,
-      html: document.documentElement.outerHTML.substring(0, 50000),
-    };
-  });
-  
-  const dataExtractionTimeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`Data extraction timeout after ${DATA_EXTRACTION_TIMEOUT}ms`)), DATA_EXTRACTION_TIMEOUT)
-  );
-  
-  const pageData = await Promise.race([pageDataPromise, dataExtractionTimeoutPromise]);
-  console.log(`  ✅ Page data extracted (${pageData.images.length} images, ${pageData.links.length} links)`);
+      return {
+        title: document.title,
+        metaDescription: document.querySelector('meta[name="description"]')?.getAttribute('content') || '',
+        url: window.location.href,
+        images,
+        links,
+        headings,
+        buttons,
+        forms,
+        textStyles: textElements,
+        html: document.documentElement.outerHTML.substring(0, 50000),
+      };
+    });
+
+    const dataExtractionTimeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Data extraction timeout after ${DATA_EXTRACTION_TIMEOUT}ms`)), DATA_EXTRACTION_TIMEOUT)
+    );
+
+    const pageData = await Promise.race([pageDataPromise, dataExtractionTimeoutPromise]);
+    console.log(`  ✅ Page data extracted (${pageData.images.length} images, ${pageData.links.length} links)`);
 
     // Take screenshot with timeout
     console.log(`  📸 Taking screenshot...`);
@@ -355,9 +361,13 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal): P
     );
     const screenshot = await Promise.race([screenshotPromise, screenshotTimeoutPromise]);
     console.log(`  ✅ Screenshot captured`);
-    
-    await browser.close();
-    console.log(`  ✅ Browser closed`);
+
+    if (isLocalBrowser) {
+      await browser.close();
+      console.log(`  ✅ Browser closed (local instance)`);
+    } else {
+      console.log(`  ✅ Browser preserved for reuse`);
+    }
 
     // Analyze with AI
     console.log(`  🤖 Analyzing with AI...`);
@@ -415,11 +425,11 @@ Format:
 
 Focus on the most impactful issues. Return 8-15 findings total.`;
 
-  // Use environment variable if set, otherwise use fallback list
-  const preferredModel = process.env.CLAUDE_MODEL || process.env.ANTHROPIC_MODEL;
-  const modelNames = preferredModel 
-    ? [preferredModel]  // Use environment variable model first
-    : [
+    // Use environment variable if set, otherwise use fallback list
+    const preferredModel = process.env.CLAUDE_MODEL || process.env.ANTHROPIC_MODEL;
+    const modelNames = preferredModel
+      ? [preferredModel]  // Use environment variable model first
+      : [
         "claude-3-haiku-20240307",      // Primary: Claude 3 Haiku (most accessible)
         "claude-3-sonnet-20240229",     // Fallback: Claude 3 Sonnet
         "claude-3-opus-20240229",       // Fallback: Claude 3 Opus
@@ -427,81 +437,81 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
         "claude-3-5-sonnet",            // Try Claude 3.5 Sonnet (if available)
       ];
 
-  // Check API key before making requests
-  if (!apiKey || apiKey.trim() === '') {
-    throw new Error('ANTHROPIC_API_KEY is not set. Please set it in .env.local file.');
-  }
-  
-  let message: any = null;
-  const rateLimiter = getRateLimiter();
-  const AI_ANALYSIS_TIMEOUT = 30000; // 30 seconds max for AI analysis
-  
-  for (const modelName of modelNames) {
-    try {
-      // Wait for rate limit before making API call
-      await rateLimiter.waitIfNeeded();
-      
-      console.log(`  🤖 Trying model: ${modelName}`);
-      
-      // Wrap AI API call in timeout to prevent hanging
-      const aiPromise = anthropic.messages.create({
-        model: modelName,
-        max_tokens: 4000,
-        messages: [{
-          role: 'user',
-          content: analysisPrompt,
-        }],
-      });
-      
-      const aiTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`AI analysis timeout after ${AI_ANALYSIS_TIMEOUT}ms`)), AI_ANALYSIS_TIMEOUT)
-      );
-      
-      message = await Promise.race([aiPromise, aiTimeoutPromise]);
-      
-      // Record successful request
-      rateLimiter.recordRequest();
-      console.log(`  ✅ Successfully used model: ${modelName}`);
-      break;
-    } catch (modelError: any) {
-      console.error(`  ❌ Model ${modelName} failed:`, modelError.status, modelError.message);
-      // Handle authentication errors (401)
-      if (modelError.status === 401) {
-        throw new Error('Authentication failed. Please verify your ANTHROPIC_API_KEY is correct and valid.');
-      }
-      
-      // Handle rate limit errors (429)
-      if (modelError.status === 429) {
-        const retryAfter = modelError.headers?.['retry-after'] 
-          ? parseInt(modelError.headers['retry-after'], 10)
-          : undefined;
-        rateLimiter.handle429(retryAfter);
-        
-        // If this is not the last model, wait and retry
-        if (modelNames.indexOf(modelName) < modelNames.length - 1) {
-          const waitTime = (retryAfter || 60) * 1000;
-          console.log(`   ⏳ Rate limited. Waiting ${retryAfter || 60}s before trying next model...`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
+    // Check API key before making requests
+    if (!apiKey || apiKey.trim() === '') {
+      throw new Error('ANTHROPIC_API_KEY is not set. Please set it in .env.local file.');
+    }
+
+    let message: any = null;
+    const rateLimiter = getRateLimiter();
+    const AI_ANALYSIS_TIMEOUT = 30000; // 30 seconds max for AI analysis
+
+    for (const modelName of modelNames) {
+      try {
+        // Wait for rate limit before making API call
+        await rateLimiter.waitIfNeeded();
+
+        console.log(`  🤖 Trying model: ${modelName}`);
+
+        // Wrap AI API call in timeout to prevent hanging
+        const aiPromise = anthropic.messages.create({
+          model: modelName,
+          max_tokens: 4000,
+          messages: [{
+            role: 'user',
+            content: analysisPrompt,
+          }],
+        });
+
+        const aiTimeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`AI analysis timeout after ${AI_ANALYSIS_TIMEOUT}ms`)), AI_ANALYSIS_TIMEOUT)
+        );
+
+        message = await Promise.race([aiPromise, aiTimeoutPromise]);
+
+        // Record successful request
+        rateLimiter.recordRequest();
+        console.log(`  ✅ Successfully used model: ${modelName}`);
+        break;
+      } catch (modelError: any) {
+        console.error(`  ❌ Model ${modelName} failed:`, modelError.status, modelError.message);
+        // Handle authentication errors (401)
+        if (modelError.status === 401) {
+          throw new Error('Authentication failed. Please verify your ANTHROPIC_API_KEY is correct and valid.');
+        }
+
+        // Handle rate limit errors (429)
+        if (modelError.status === 429) {
+          const retryAfter = modelError.headers?.['retry-after']
+            ? parseInt(modelError.headers['retry-after'], 10)
+            : undefined;
+          rateLimiter.handle429(retryAfter);
+
+          // If this is not the last model, wait and retry
+          if (modelNames.indexOf(modelName) < modelNames.length - 1) {
+            const waitTime = (retryAfter || 60) * 1000;
+            console.log(`   ⏳ Rate limited. Waiting ${retryAfter || 60}s before trying next model...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            continue;
+          } else {
+            // Last model failed with 429, throw error
+            throw new Error(`Rate limit exceeded. Please wait ${retryAfter || 60} seconds before retrying.`);
+          }
+        }
+
+        // Handle model not found (404) - try next model
+        if (modelError.status === 404 && modelNames.indexOf(modelName) < modelNames.length - 1) {
+          console.log(`   ⚠️ Model ${modelName} not found, trying next model...`);
           continue;
-        } else {
-          // Last model failed with 429, throw error
-          throw new Error(`Rate limit exceeded. Please wait ${retryAfter || 60} seconds before retrying.`);
+        }
+
+        // If this is the last model or error is not 404, throw
+        if (modelNames.indexOf(modelName) === modelNames.length - 1 || modelError.status !== 404) {
+          throw modelError;
         }
       }
-      
-      // Handle model not found (404) - try next model
-      if (modelError.status === 404 && modelNames.indexOf(modelName) < modelNames.length - 1) {
-        console.log(`   ⚠️ Model ${modelName} not found, trying next model...`);
-        continue;
-      }
-      
-      // If this is the last model or error is not 404, throw
-      if (modelNames.indexOf(modelName) === modelNames.length - 1 || modelError.status !== 404) {
-        throw modelError;
-      }
     }
-  }
-  
+
     if (!message) {
       console.error(`  ❌ All AI models failed`);
       throw new Error('Failed to find a valid AI model');
@@ -509,357 +519,357 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
     console.log(`  ✅ AI analysis completed`);
 
     let findings: AuditFinding[] = [];
-  try {
-    const content = message.content[0];
-    if (content.type === 'text') {
-      let jsonString = '';
-      
-      // Strategy 1: Try to extract JSON from markdown code blocks
-      const codeBlockMatch = content.text.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
-      if (codeBlockMatch) {
-        jsonString = codeBlockMatch[1];
-        console.log('  📝 Extracted JSON from markdown code block');
-      } else {
-        // Strategy 2: Try to find JSON array in the text
-        const jsonMatch = content.text.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          jsonString = jsonMatch[0];
-          console.log('  📝 Extracted JSON from text');
+    try {
+      const content = message.content[0];
+      if (content.type === 'text') {
+        let jsonString = '';
+
+        // Strategy 1: Try to extract JSON from markdown code blocks
+        const codeBlockMatch = content.text.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
+        if (codeBlockMatch) {
+          jsonString = codeBlockMatch[1];
+          console.log('  📝 Extracted JSON from markdown code block');
+        } else {
+          // Strategy 2: Try to find JSON array in the text
+          const jsonMatch = content.text.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            jsonString = jsonMatch[0];
+            console.log('  📝 Extracted JSON from text');
+          }
         }
-      }
-      
-      if (jsonString) {
-        // Enhanced JSON repair function
-        const repairJSON = (str: string): string => {
-          let result = str;
-          
-          // Step 1: Remove control characters (except newlines, tabs, carriage returns)
-          result = result.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
-          
-          // Step 2: Normalize line endings
-          result = result.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-          
-          // Step 3: Fix invalid escape sequences in string values
-          // JSON only allows: \" \\ \/ \b \f \n \r \t \uXXXX
-          // We need to fix invalid escapes like \x, \z, etc.
-          // Use a simpler approach: find and fix invalid escapes inside strings
-          let fixed = '';
-          let inString = false;
-          let i = 0;
-          
-          while (i < result.length) {
-            const char = result[i];
-            const nextChar = result[i + 1];
-            
-            if (char === '"') {
-              // Check if this quote is escaped by counting consecutive backslashes before it
-              let backslashCount = 0;
-              let j = i - 1;
-              while (j >= 0 && result[j] === '\\') {
-                backslashCount++;
-                j--;
+
+        if (jsonString) {
+          // Enhanced JSON repair function
+          const repairJSON = (str: string): string => {
+            let result = str;
+
+            // Step 1: Remove control characters (except newlines, tabs, carriage returns)
+            result = result.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
+
+            // Step 2: Normalize line endings
+            result = result.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+            // Step 3: Fix invalid escape sequences in string values
+            // JSON only allows: \" \\ \/ \b \f \n \r \t \uXXXX
+            // We need to fix invalid escapes like \x, \z, etc.
+            // Use a simpler approach: find and fix invalid escapes inside strings
+            let fixed = '';
+            let inString = false;
+            let i = 0;
+
+            while (i < result.length) {
+              const char = result[i];
+              const nextChar = result[i + 1];
+
+              if (char === '"') {
+                // Check if this quote is escaped by counting consecutive backslashes before it
+                let backslashCount = 0;
+                let j = i - 1;
+                while (j >= 0 && result[j] === '\\') {
+                  backslashCount++;
+                  j--;
+                }
+
+                // If even number of backslashes (or zero), the quote is not escaped
+                // If odd number, the quote is escaped (part of string content)
+                if (backslashCount % 2 === 0) {
+                  inString = !inString;
+                }
+                fixed += char;
+                i++;
+                continue;
               }
-              
-              // If even number of backslashes (or zero), the quote is not escaped
-              // If odd number, the quote is escaped (part of string content)
-              if (backslashCount % 2 === 0) {
-                inString = !inString;
+
+              if (char === '\\' && inString) {
+                // We're inside a string and found a backslash
+                if (nextChar && /["\\/bfnrtu]/.test(nextChar)) {
+                  // Valid escape sequence - keep it
+                  fixed += char + nextChar;
+                  i += 2;
+                } else if (nextChar && nextChar === 'u' && /[0-9a-fA-F]/.test(result[i + 2]) && /[0-9a-fA-F]/.test(result[i + 3]) && /[0-9a-fA-F]/.test(result[i + 4]) && /[0-9a-fA-F]/.test(result[i + 5])) {
+                  // Valid unicode escape \uXXXX
+                  fixed += result.substring(i, i + 6);
+                  i += 6;
+                } else if (nextChar) {
+                  // Invalid escape sequence - escape the backslash itself
+                  fixed += '\\\\' + nextChar;
+                  i += 2;
+                } else {
+                  // Backslash at end of string - escape it
+                  fixed += '\\\\';
+                  i++;
+                }
+                continue;
               }
+
+              if (inString && (char === '\n' || char === '\r' || char === '\t')) {
+                // Replace literal newlines/tabs in strings with escaped versions
+                if (char === '\n') {
+                  fixed += '\\n';
+                } else if (char === '\r') {
+                  fixed += '\\r';
+                } else if (char === '\t') {
+                  fixed += '\\t';
+                }
+                i++;
+                continue;
+              }
+
               fixed += char;
               i++;
-              continue;
             }
-            
-            if (char === '\\' && inString) {
-              // We're inside a string and found a backslash
-              if (nextChar && /["\\/bfnrtu]/.test(nextChar)) {
-                // Valid escape sequence - keep it
-                fixed += char + nextChar;
-                i += 2;
-              } else if (nextChar && nextChar === 'u' && /[0-9a-fA-F]/.test(result[i + 2]) && /[0-9a-fA-F]/.test(result[i + 3]) && /[0-9a-fA-F]/.test(result[i + 4]) && /[0-9a-fA-F]/.test(result[i + 5])) {
-                // Valid unicode escape \uXXXX
-                fixed += result.substring(i, i + 6);
-                i += 6;
-              } else if (nextChar) {
-                // Invalid escape sequence - escape the backslash itself
-                fixed += '\\\\' + nextChar;
-                i += 2;
-              } else {
-                // Backslash at end of string - escape it
-                fixed += '\\\\';
-                i++;
-              }
-              continue;
-            }
-            
-            if (inString && (char === '\n' || char === '\r' || char === '\t')) {
-              // Replace literal newlines/tabs in strings with escaped versions
-              if (char === '\n') {
-                fixed += '\\n';
-              } else if (char === '\r') {
-                fixed += '\\r';
-              } else if (char === '\t') {
-                fixed += '\\t';
-              }
-              i++;
-              continue;
-            }
-            
-            fixed += char;
-            i++;
-          }
-          
-          result = fixed;
-          
-          // Step 4: Fix trailing commas before } or ]
-          result = result.replace(/,(\s*[}\]])/g, '$1');
-          
-          // Step 5: Fix missing commas between objects
-          result = result.replace(/}\s*{/g, '},{');
-          
-          // Step 6: Fix missing commas between array elements
-          result = result.replace(/\]\s*\[/g, '],[');
-          
-          // Step 7: Final pass to fix any remaining invalid escape sequences
-          // This is a more reliable approach that properly tracks string state
-          let finalResult = '';
-          let finalInString = false;
-          let finalEscapeNext = false;
-          
-          for (let i = 0; i < result.length; i++) {
-            const char = result[i];
-            const nextChar = result[i + 1];
-            
-            if (finalEscapeNext) {
-              // Previous char was a backslash - this char is being escaped
-              // Check if it's a valid escape sequence
-              if (/["\\/bfnrtu]/.test(char)) {
-                // Valid escape - keep it
-                finalResult += '\\' + char;
-              } else if (char === 'u' && i + 5 < result.length && /[0-9a-fA-F]{4}/.test(result.substring(i + 1, i + 5))) {
-                // Valid unicode escape
-                finalResult += '\\u' + result.substring(i + 1, i + 5);
-                i += 4; // Skip the 4 hex digits
-              } else {
-                // Invalid escape - escape the backslash itself
-                finalResult += '\\\\' + char;
-              }
-              finalEscapeNext = false;
-              continue;
-            }
-            
-            if (char === '\\') {
-              finalEscapeNext = true;
-              continue;
-            }
-            
-            if (char === '"') {
-              finalInString = !finalInString;
-              finalResult += char;
-              continue;
-            }
-            
-            // If we're in a string and find a control character, escape it
-            if (finalInString && (char === '\n' || char === '\r' || char === '\t')) {
-              if (char === '\n') {
-                finalResult += '\\n';
-              } else if (char === '\r') {
-                finalResult += '\\r';
-              } else if (char === '\t') {
-                finalResult += '\\t';
-              }
-              continue;
-            }
-            
-            finalResult += char;
-          }
-          
-          // Handle trailing backslash
-          if (finalEscapeNext) {
-            finalResult += '\\\\';
-          }
-          
-          return finalResult;
-        };
-        
-        // Apply JSON repair
-        let cleanedJSON = repairJSON(jsonString);
-        
-        try {
-          findings = JSON.parse(cleanedJSON);
-          console.log(`  ✅ Successfully parsed ${findings.length} findings`);
-        } catch (parseError: any) {
-          console.error('  ❌ Error parsing cleaned JSON:', parseError.message);
-          console.error('  JSON string length:', cleanedJSON.length);
-          
-          // Try a more aggressive repair: extract and fix individual objects
-          try {
-            // More sophisticated object extraction that handles nested structures
-            const objectMatches: string[] = [];
-            let depth = 0;
-            let start = -1;
-            let inString = false;
-            let escapeNext = false;
-            
-            for (let i = 0; i < jsonString.length; i++) {
-              const char = jsonString[i];
-              
-              if (escapeNext) {
-                escapeNext = false;
+
+            result = fixed;
+
+            // Step 4: Fix trailing commas before } or ]
+            result = result.replace(/,(\s*[}\]])/g, '$1');
+
+            // Step 5: Fix missing commas between objects
+            result = result.replace(/}\s*{/g, '},{');
+
+            // Step 6: Fix missing commas between array elements
+            result = result.replace(/\]\s*\[/g, '],[');
+
+            // Step 7: Final pass to fix any remaining invalid escape sequences
+            // This is a more reliable approach that properly tracks string state
+            let finalResult = '';
+            let finalInString = false;
+            let finalEscapeNext = false;
+
+            for (let i = 0; i < result.length; i++) {
+              const char = result[i];
+              const nextChar = result[i + 1];
+
+              if (finalEscapeNext) {
+                // Previous char was a backslash - this char is being escaped
+                // Check if it's a valid escape sequence
+                if (/["\\/bfnrtu]/.test(char)) {
+                  // Valid escape - keep it
+                  finalResult += '\\' + char;
+                } else if (char === 'u' && i + 5 < result.length && /[0-9a-fA-F]{4}/.test(result.substring(i + 1, i + 5))) {
+                  // Valid unicode escape
+                  finalResult += '\\u' + result.substring(i + 1, i + 5);
+                  i += 4; // Skip the 4 hex digits
+                } else {
+                  // Invalid escape - escape the backslash itself
+                  finalResult += '\\\\' + char;
+                }
+                finalEscapeNext = false;
                 continue;
               }
-              
+
               if (char === '\\') {
-                escapeNext = true;
+                finalEscapeNext = true;
                 continue;
               }
-              
+
               if (char === '"') {
-                inString = !inString;
+                finalInString = !finalInString;
+                finalResult += char;
                 continue;
               }
-              
-              if (!inString) {
-                if (char === '{') {
-                  if (depth === 0) {
-                    start = i;
-                  }
-                  depth++;
-                } else if (char === '}') {
-                  depth--;
-                  if (depth === 0 && start !== -1) {
-                    // Found a complete object
-                    const objStr = jsonString.substring(start, i + 1);
-                    // Check if it looks like a finding object
-                    if (objStr.includes('"category"') || objStr.includes('"issue"')) {
-                      objectMatches.push(objStr);
+
+              // If we're in a string and find a control character, escape it
+              if (finalInString && (char === '\n' || char === '\r' || char === '\t')) {
+                if (char === '\n') {
+                  finalResult += '\\n';
+                } else if (char === '\r') {
+                  finalResult += '\\r';
+                } else if (char === '\t') {
+                  finalResult += '\\t';
+                }
+                continue;
+              }
+
+              finalResult += char;
+            }
+
+            // Handle trailing backslash
+            if (finalEscapeNext) {
+              finalResult += '\\\\';
+            }
+
+            return finalResult;
+          };
+
+          // Apply JSON repair
+          let cleanedJSON = repairJSON(jsonString);
+
+          try {
+            findings = JSON.parse(cleanedJSON);
+            console.log(`  ✅ Successfully parsed ${findings.length} findings`);
+          } catch (parseError: any) {
+            console.error('  ❌ Error parsing cleaned JSON:', parseError.message);
+            console.error('  JSON string length:', cleanedJSON.length);
+
+            // Try a more aggressive repair: extract and fix individual objects
+            try {
+              // More sophisticated object extraction that handles nested structures
+              const objectMatches: string[] = [];
+              let depth = 0;
+              let start = -1;
+              let inString = false;
+              let escapeNext = false;
+
+              for (let i = 0; i < jsonString.length; i++) {
+                const char = jsonString[i];
+
+                if (escapeNext) {
+                  escapeNext = false;
+                  continue;
+                }
+
+                if (char === '\\') {
+                  escapeNext = true;
+                  continue;
+                }
+
+                if (char === '"') {
+                  inString = !inString;
+                  continue;
+                }
+
+                if (!inString) {
+                  if (char === '{') {
+                    if (depth === 0) {
+                      start = i;
                     }
-                    start = -1;
+                    depth++;
+                  } else if (char === '}') {
+                    depth--;
+                    if (depth === 0 && start !== -1) {
+                      // Found a complete object
+                      const objStr = jsonString.substring(start, i + 1);
+                      // Check if it looks like a finding object
+                      if (objStr.includes('"category"') || objStr.includes('"issue"')) {
+                        objectMatches.push(objStr);
+                      }
+                      start = -1;
+                    }
                   }
                 }
               }
-            }
-            
-            if (objectMatches.length > 0) {
-              console.log(`  🔧 Attempting to extract ${objectMatches.length} individual findings...`);
-              findings = objectMatches.map((objStr: string) => {
-                try {
-                  // Apply repair to individual object
-                  const fixed = repairJSON(objStr);
-                  return JSON.parse(fixed);
-                } catch (e) {
-                  return null;
+
+              if (objectMatches.length > 0) {
+                console.log(`  🔧 Attempting to extract ${objectMatches.length} individual findings...`);
+                findings = objectMatches.map((objStr: string) => {
+                  try {
+                    // Apply repair to individual object
+                    const fixed = repairJSON(objStr);
+                    return JSON.parse(fixed);
+                  } catch (e) {
+                    return null;
+                  }
+                }).filter((f: any) => f !== null && f.category && f.issue) as AuditFinding[];
+
+                if (findings.length > 0) {
+                  console.log(`  ✅ Extracted ${findings.length} valid findings from partial JSON`);
+                } else {
+                  throw parseError;
                 }
-              }).filter((f: any) => f !== null && f.category && f.issue) as AuditFinding[];
-              
-              if (findings.length > 0) {
-                console.log(`  ✅ Extracted ${findings.length} valid findings from partial JSON`);
               } else {
                 throw parseError;
               }
-            } else {
-              throw parseError;
-            }
-          } catch (extractError) {
-            // Log more context around the error position
-            const errorMatch = parseError.message.match(/position (\d+)/);
-            const errorPos = errorMatch ? parseInt(errorMatch[1]) : 640;
-            const startPos = Math.max(0, errorPos - 150);
-            const endPos = Math.min(cleanedJSON.length, errorPos + 150);
-            
-            console.error('  JSON preview (first 500 chars):', cleanedJSON.substring(0, 500));
-            console.error(`  JSON around error position (${errorPos}):`);
-            console.error('  Context:', cleanedJSON.substring(startPos, endPos));
-            console.error(`  Character at error position: "${cleanedJSON[errorPos]}" (char code: ${cleanedJSON.charCodeAt(errorPos)})`);
-            console.error(`  Previous 10 chars: "${cleanedJSON.substring(Math.max(0, errorPos - 10), errorPos)}"`);
-            console.error(`  Next 10 chars: "${cleanedJSON.substring(errorPos + 1, Math.min(cleanedJSON.length, errorPos + 11))}"`);
-            
-            // Try one more time with even more aggressive repair
-            try {
-              console.log('  🔧 Attempting ultra-aggressive JSON repair...');
-              // Remove all backslashes that aren't part of valid escape sequences
-              let ultraFixed = cleanedJSON;
-              // Find and fix all invalid escapes more aggressively
-              ultraFixed = ultraFixed.replace(/\\(?![\\"/bfnrtu]|u[0-9a-fA-F]{4})/g, (match, offset) => {
-                // Check if we're in a string by properly parsing
-                let inStr = false;
-                let escaped = false;
-                for (let j = 0; j < offset; j++) {
-                  if (!escaped && ultraFixed[j] === '"') {
-                    inStr = !inStr;
+            } catch (extractError) {
+              // Log more context around the error position
+              const errorMatch = parseError.message.match(/position (\d+)/);
+              const errorPos = errorMatch ? parseInt(errorMatch[1]) : 640;
+              const startPos = Math.max(0, errorPos - 150);
+              const endPos = Math.min(cleanedJSON.length, errorPos + 150);
+
+              console.error('  JSON preview (first 500 chars):', cleanedJSON.substring(0, 500));
+              console.error(`  JSON around error position (${errorPos}):`);
+              console.error('  Context:', cleanedJSON.substring(startPos, endPos));
+              console.error(`  Character at error position: "${cleanedJSON[errorPos]}" (char code: ${cleanedJSON.charCodeAt(errorPos)})`);
+              console.error(`  Previous 10 chars: "${cleanedJSON.substring(Math.max(0, errorPos - 10), errorPos)}"`);
+              console.error(`  Next 10 chars: "${cleanedJSON.substring(errorPos + 1, Math.min(cleanedJSON.length, errorPos + 11))}"`);
+
+              // Try one more time with even more aggressive repair
+              try {
+                console.log('  🔧 Attempting ultra-aggressive JSON repair...');
+                // Remove all backslashes that aren't part of valid escape sequences
+                let ultraFixed = cleanedJSON;
+                // Find and fix all invalid escapes more aggressively
+                ultraFixed = ultraFixed.replace(/\\(?![\\"/bfnrtu]|u[0-9a-fA-F]{4})/g, (match, offset) => {
+                  // Check if we're in a string by properly parsing
+                  let inStr = false;
+                  let escaped = false;
+                  for (let j = 0; j < offset; j++) {
+                    if (!escaped && ultraFixed[j] === '"') {
+                      inStr = !inStr;
+                    }
+                    escaped = !escaped && ultraFixed[j] === '\\';
                   }
-                  escaped = !escaped && ultraFixed[j] === '\\';
-                }
-                if (inStr) {
-                  const next = ultraFixed[offset + 1];
-                  return next ? `\\\\${next}` : '\\\\';
-                }
-                return ultraFixed[offset + 1] || '';
-              });
-              
-              findings = JSON.parse(ultraFixed);
-              console.log(`  ✅ Ultra-aggressive repair succeeded: ${findings.length} findings`);
-            } catch (ultraError) {
-              console.error('  ❌ Ultra-aggressive repair also failed');
-              throw parseError;
+                  if (inStr) {
+                    const next = ultraFixed[offset + 1];
+                    return next ? `\\\\${next}` : '\\\\';
+                  }
+                  return ultraFixed[offset + 1] || '';
+                });
+
+                findings = JSON.parse(ultraFixed);
+                console.log(`  ✅ Ultra-aggressive repair succeeded: ${findings.length} findings`);
+              } catch (ultraError) {
+                console.error('  ❌ Ultra-aggressive repair also failed');
+                throw parseError;
+              }
             }
           }
+        } else {
+          console.warn('  ⚠️ No JSON array found in AI response');
         }
-      } else {
-        console.warn('  ⚠️ No JSON array found in AI response');
       }
+    } catch (error: any) {
+      console.error('Error parsing AI response:', error);
+      console.error('Error details:', error.message);
+      console.error('Error stack:', error.stack);
+      // Return a fallback finding instead of empty array
+      findings = [
+        {
+          category: 'accessibility' as const,
+          severity: 'high' as const,
+          issue: 'Analysis completed',
+          description: 'AI analysis completed. Some findings may need manual review due to parsing error.',
+          location: 'Page-wide',
+          suggestion: 'Review the full audit report. If this persists, check ANTHROPIC_API_KEY and model access.',
+        },
+      ];
     }
-  } catch (error: any) {
-    console.error('Error parsing AI response:', error);
-    console.error('Error details:', error.message);
-    console.error('Error stack:', error.stack);
-    // Return a fallback finding instead of empty array
-    findings = [
-      {
-        category: 'accessibility' as const,
-        severity: 'high' as const,
-        issue: 'Analysis completed',
-        description: 'AI analysis completed. Some findings may need manual review due to parsing error.',
-        location: 'Page-wide',
-        suggestion: 'Review the full audit report. If this persists, check ANTHROPIC_API_KEY and model access.',
-      },
-    ];
-  }
 
-  // Calculate summary
-  const criticalCount = findings.filter(f => f.severity === 'critical').length;
-  const highCount = findings.filter(f => f.severity === 'high').length;
-  const mediumCount = findings.filter(f => f.severity === 'medium').length;
-  const lowCount = findings.filter(f => f.severity === 'low').length;
-  
-  const calculateOverallScore = () => {
-    let score = 92;
-    score -= Math.min(criticalCount * 5, 20);
-    score -= Math.min(highCount * 1.0, 10);
-    score -= Math.min(mediumCount * 0.25, 6);
-    score -= Math.min(lowCount * 0.05, 1);
-    
-    if (criticalCount === 0) {
-      score += 5;
-    }
-    
-    if (criticalCount === 0 && highCount <= 4) {
-      score += Math.min(3, (5 - highCount) * 0.6);
-    }
-    
+    // Calculate summary
+    const criticalCount = findings.filter(f => f.severity === 'critical').length;
+    const highCount = findings.filter(f => f.severity === 'high').length;
+    const mediumCount = findings.filter(f => f.severity === 'medium').length;
+    const lowCount = findings.filter(f => f.severity === 'low').length;
+
+    const calculateOverallScore = () => {
+      let score = 92;
+      score -= Math.min(criticalCount * 5, 20);
+      score -= Math.min(highCount * 1.0, 10);
+      score -= Math.min(mediumCount * 0.25, 6);
+      score -= Math.min(lowCount * 0.05, 1);
+
+      if (criticalCount === 0) {
+        score += 5;
+      }
+
+      if (criticalCount === 0 && highCount <= 4) {
+        score += Math.min(3, (5 - highCount) * 0.6);
+      }
+
       return Math.max(0, Math.min(100, Math.round(score)));
     };
-    
+
     const summary = {
-    totalIssues: findings.length,
-    critical: criticalCount,
-    high: highCount,
-    medium: mediumCount,
-    low: lowCount,
-    accessibility: findings.filter(f => f.category === 'accessibility').length,
-    usability: findings.filter(f => f.category === 'usability').length,
-    design: findings.filter(f => f.category === 'design').length,
-    performance: findings.filter(f => f.category === 'performance').length,
+      totalIssues: findings.length,
+      critical: criticalCount,
+      high: highCount,
+      medium: mediumCount,
+      low: lowCount,
+      accessibility: findings.filter(f => f.category === 'accessibility').length,
+      usability: findings.filter(f => f.category === 'usability').length,
+      design: findings.filter(f => f.category === 'design').length,
+      performance: findings.filter(f => f.category === 'performance').length,
       seo: findings.filter(f => f.category === 'seo').length,
       overallScore: calculateOverallScore(),
     };
@@ -883,7 +893,7 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
         console.error(`  ⚠️ Error closing browser:`, closeError);
       }
     }
-    
+
     // Log detailed error information
     console.error(`  ❌ Audit failed for ${url}:`);
     console.error(`     Error: ${error.message}`);
@@ -891,7 +901,7 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
     if (error.stack) {
       console.error(`     Stack: ${error.stack.split('\n').slice(0, 5).join('\n')}`);
     }
-    
+
     // Re-throw with more context
     throw new Error(`Audit failed for ${url}: ${error.message}`);
   }

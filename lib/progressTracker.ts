@@ -55,26 +55,26 @@ async function initializeKv() {
     return;
   }
 
-    // Skip initialization during build time or static generation
-    // But allow initialization at runtime even if RUNTIME is not set (serverless execution)
-    if (typeof window === 'undefined') {
-      // Check if we're in build phase
-      const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build' || 
-                           process.env.NEXT_PHASE === 'phase-development-build';
-      
-      // In Vercel serverless, we should always initialize (even during build if it's a serverless function)
-      // Only skip if we're in actual build phase AND not in Vercel
-      if (isBuildPhase && !process.env.VERCEL) {
-        console.log('⚠️ Skipping KV initialization during build/static generation');
-        kvInitialized = true;
-        return;
-      }
-      
-      // If we're in Vercel, always allow initialization (serverless functions need it)
-      if (process.env.VERCEL) {
-        // This is fine - continue with initialization
-      }
+  // Skip initialization during build time or static generation
+  // But allow initialization at runtime even if RUNTIME is not set (serverless execution)
+  if (typeof window === 'undefined') {
+    // Check if we're in build phase
+    const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build' ||
+      process.env.NEXT_PHASE === 'phase-development-build';
+
+    // In Vercel serverless, we should always initialize (even during build if it's a serverless function)
+    // Only skip if we're in actual build phase AND not in Vercel
+    if (isBuildPhase && !process.env.VERCEL) {
+      console.log('⚠️ Skipping KV initialization during build/static generation');
+      kvInitialized = true;
+      return;
     }
+
+    // If we're in Vercel, always allow initialization (serverless functions need it)
+    if (process.env.VERCEL) {
+      // This is fine - continue with initialization
+    }
+  }
 
   try {
     // First, try Redis Labs connection string (REDIS_URL) - preferred for user's setup
@@ -83,11 +83,11 @@ async function initializeKv() {
       console.log('   REDIS_URL present:', !!process.env.REDIS_URL);
       console.log('   REDIS_URL length:', process.env.REDIS_URL?.length);
       console.log('   REDIS_URL starts with redis://:', process.env.REDIS_URL?.startsWith('redis://'));
-      
+
       try {
         // Use official redis package as per Vercel's guide
         const { createClient } = require('redis');
-        
+
         // Create Redis client (following Vercel's pattern)
         const redis = createClient({
           url: process.env.REDIS_URL,
@@ -104,57 +104,57 @@ async function initializeKv() {
             }
           }
         });
-        
+
         // Add error handlers for better debugging
         redis.on('error', (err: any) => {
           console.error('❌ Redis connection error:', err.message);
           console.error('   Error code:', err.code);
           console.error('   Error stack:', err.stack);
         });
-        
+
         redis.on('connect', () => {
           console.log('✅ Redis connection established');
         });
-        
+
         redis.on('ready', () => {
           console.log('✅ Redis is ready to accept commands');
         });
-        
+
         // Connect lazily on first use
         let connected = false;
         let connectionAttempted = false;
         let connectionError: Error | null = null;
-        
+
         async function ensureConnected() {
           // If already connected, return immediately
           if (connected && redis.isOpen && redis.isReady) {
             return;
           }
-          
+
           // If connection was attempted and failed, allow retry (for serverless environments)
           if (connectionAttempted && connectionError) {
             console.log('🔄 Retrying Redis connection (previous attempt failed)...');
             connectionAttempted = false; // Allow retry
             connectionError = null;
           }
-          
+
           if (!connected && !connectionAttempted) {
             connectionAttempted = true;
             try {
               console.log('🔌 Attempting Redis connection...');
               console.log('   REDIS_URL present:', !!process.env.REDIS_URL);
-              
+
               // Connect using Vercel's pattern: await createClient().connect()
               // Set a connection timeout
               const connectPromise = redis.connect();
-              const timeoutPromise = new Promise<never>((_, reject) => 
+              const timeoutPromise = new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error('Redis connection timeout after 10 seconds')), 10000)
               );
-              
+
               await Promise.race([connectPromise, timeoutPromise]);
               connected = true;
               console.log('✅ Redis connected successfully');
-              
+
               // Test connection with a ping
               try {
                 const pingResult = await redis.ping();
@@ -173,43 +173,43 @@ async function initializeKv() {
               // The error will be logged and the function will continue
             }
           }
-          
+
           // If still not connected after attempt, throw error
           if (!connected && connectionAttempted) {
             throw connectionError || new Error('Redis connection failed');
           }
         }
-      
-      // Create a compatible interface for Redis operations
-      kv = {
-        async get(key: string) {
-          await ensureConnected();
-          const result = await redis.get(key);
-          return result;
-        },
-        async set(key: string, value: string, options?: { ex?: number }) {
-          await ensureConnected();
-          if (options?.ex) {
-            // Redis SETEX: set with expiration in seconds
-            return await redis.setEx(key, options.ex, value);
+
+        // Create a compatible interface for Redis operations
+        kv = {
+          async get(key: string) {
+            await ensureConnected();
+            const result = await redis.get(key);
+            return result;
+          },
+          async set(key: string, value: string, options?: { ex?: number }) {
+            await ensureConnected();
+            if (options?.ex) {
+              // Redis SETEX: set with expiration in seconds
+              return await redis.setEx(key, options.ex, value);
+            }
+            return await redis.set(key, value);
+          },
+          async del(key: string) {
+            await ensureConnected();
+            return await redis.del(key);
+          },
+          async keys(pattern: string) {
+            await ensureConnected();
+            return await redis.keys(pattern);
           }
-          return await redis.set(key, value);
-        },
-        async del(key: string) {
-          await ensureConnected();
-          return await redis.del(key);
-        },
-        async keys(pattern: string) {
-          await ensureConnected();
-          return await redis.keys(pattern);
-        }
-      };
-      useKv = true;
-      kvInitialized = true;
-      console.log('✅ Redis Labs connection initialized (lazy connect enabled)');
-      console.log('   Connection will be established on first use');
-      console.log('   Using REDIS_URL for persistent storage');
-      return;
+        };
+        useKv = true;
+        kvInitialized = true;
+        console.log('✅ Redis Labs connection initialized (lazy connect enabled)');
+        console.log('   Connection will be established on first use');
+        console.log('   Using REDIS_URL for persistent storage');
+        return;
       } catch (redisError: any) {
         console.error('❌ Failed to initialize Redis:', redisError.message);
         console.error('   Error code:', redisError.code);
@@ -219,10 +219,10 @@ async function initializeKv() {
         return;
       }
     }
-    
+
     // Check if we're in production and provide helpful guidance
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
-    
+
     if (isProduction) {
       console.error('❌ CRITICAL: REDIS_URL is not configured in production!');
       console.error('   Please set REDIS_URL environment variable in Vercel');
@@ -251,7 +251,7 @@ export function getProgressStoreSize(): number {
 export async function debugProgressStore(): Promise<void> {
   // Initialize KV lazily if not already done
   await initializeKv();
-  
+
   if (useKv && kv) {
     const allKeys = await kv.keys('audit:*') as string[];
     console.log('📊 Progress Store Debug (KV):');
@@ -288,27 +288,27 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
     startTime: Date.now(),
     pageResults: [],
   };
-  
+
   // In serverless environments, KV is required for persistence
   // If KV is not available, we should still try to store in memory
   // but warn that it may not persist across invocations
-  
+
   // Store in memory (for dev/local)
   progressStore.set(jobId, progress);
-  
+
   // CRITICAL: Store in KV if available (required for serverless persistence)
   if (useKv && kv) {
     try {
       const kvKey = `audit:progress:${jobId}`;
       const progressJson = JSON.stringify(progress);
-      
+
       console.log(`📝 Storing progress in KV: ${jobId}`);
       console.log(`   KV key: ${kvKey}`);
       console.log(`   Data size: ${progressJson.length} bytes`);
-      
+
       await kv.set(kvKey, progressJson, { ex: 3600 }); // Expire after 1 hour
       console.log(`✅ Stored progress in KV: ${jobId}`);
-      
+
       // Verify it was saved by reading it back
       try {
         const verifyData = await kv.get(kvKey) as string | null;
@@ -335,7 +335,7 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
     if (isProduction) {
       const hasRedisUrl = !!process.env.REDIS_URL;
-      
+
       if (!hasRedisUrl) {
         console.error('❌ CRITICAL: REDIS_URL is not configured in production!');
         console.error('   Progress will NOT persist across serverless invocations');
@@ -348,12 +348,12 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
       }
     }
   }
-  
+
   console.log(`📝 Created progress tracker: ${jobId}, totalPages: ${totalPages}`);
   console.log(`📝 Progress store size: ${progressStore.size}`);
   console.log(`📝 Store keys: ${Array.from(progressStore.keys()).join(', ')}`);
   console.log(`📝 KV enabled: ${useKv && kv ? 'YES' : 'NO'}`);
-  
+
   // Verify it was stored
   const stored = progressStore.get(jobId);
   if (!stored) {
@@ -361,7 +361,7 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
   } else {
     console.log(`✅ Verified job ${jobId} is in store`);
   }
-  
+
   return progress;
 }
 
@@ -376,7 +376,7 @@ export async function updatePageProgress(
 ): Promise<void> {
   // Initialize KV lazily if not already done
   await initializeKv();
-  
+
   // Get progress (checking both memory and KV)
   let progress = progressStore.get(jobId);
   if (!progress && useKv && kv) {
@@ -390,14 +390,14 @@ export async function updatePageProgress(
     }
   }
   if (!progress) return;
-  
+
   const pageIndex = progress.pageResults.findIndex(p => p.url === pageUrl);
   const now = Date.now();
-  
+
   if (pageIndex >= 0) {
     const pageResult = progress.pageResults[pageIndex];
     const previousStatus = pageResult.status;
-    
+
     // Track timing
     if (status === 'processing' && previousStatus !== 'processing') {
       // Page just started processing
@@ -407,7 +407,7 @@ export async function updatePageProgress(
       pageResult.endTime = now;
       if (pageResult.startTime) {
         pageResult.duration = now - pageResult.startTime;
-        
+
         // Update timing statistics for better estimation
         if (status === 'completed' && pageResult.duration) {
           // Track recent durations (last 5 completed pages)
@@ -415,12 +415,12 @@ export async function updatePageProgress(
             progress.recentPageDurations = [];
           }
           progress.recentPageDurations.push(pageResult.duration);
-          
+
           // Keep only last 5 durations
           if (progress.recentPageDurations.length > 5) {
             progress.recentPageDurations.shift();
           }
-          
+
           // Calculate average duration
           const completedPages = progress.pageResults.filter(p => p.status === 'completed' && p.duration);
           if (completedPages.length > 0) {
@@ -430,7 +430,7 @@ export async function updatePageProgress(
         }
       }
     }
-    
+
     pageResult.status = status;
     if (score !== undefined) {
       pageResult.score = score;
@@ -443,23 +443,23 @@ export async function updatePageProgress(
     }
     progress.pageResults.push(newPageResult);
   }
-  
+
   // Update completed count
   progress.completedPages = progress.pageResults.filter(p => p.status === 'completed').length;
   progress.percentage = Math.round((progress.completedPages / progress.totalPages) * 100);
-  
+
   // Calculate estimated time left with improved algorithm
   const remainingPages = progress.totalPages - progress.completedPages;
-  
+
   if (remainingPages > 0 && progress.completedPages > 0) {
     // Use recent durations if available (more accurate for trend)
     let estimatedMsPerPage: number;
-    
+
     if (progress.recentPageDurations && progress.recentPageDurations.length >= 2) {
       // Use weighted average: recent pages weighted more heavily
       const recentAvg = progress.recentPageDurations.reduce((sum, d) => sum + d, 0) / progress.recentPageDurations.length;
       const overallAvg = progress.averagePageDuration || recentAvg;
-      
+
       // Weight: 70% recent average, 30% overall average
       estimatedMsPerPage = (recentAvg * 0.7) + (overallAvg * 0.3);
     } else if (progress.averagePageDuration) {
@@ -470,16 +470,16 @@ export async function updatePageProgress(
       const elapsed = Date.now() - progress.startTime;
       estimatedMsPerPage = elapsed / progress.completedPages;
     }
-    
+
     // Add buffer for processing overhead (10%)
     estimatedMsPerPage = estimatedMsPerPage * 1.1;
-    
+
     // Calculate estimated time left
     progress.estimatedTimeLeft = Math.round((estimatedMsPerPage * remainingPages) / 1000); // Convert to seconds
   } else {
     progress.estimatedTimeLeft = 0;
   }
-  
+
   progressStore.set(jobId, progress);
 }
 
@@ -493,7 +493,7 @@ async function saveProgressToKv(jobId: string, progress: AuditProgress): Promise
       const progressJson = JSON.stringify(progress);
       await kv.set(kvKey, progressJson, { ex: 3600 });
       console.log(`📝 Saved progress to KV: ${jobId} (status: ${progress.status}, size: ${progressJson.length} bytes)`);
-      
+
       // Verify it was saved
       try {
         const verifyData = await kv.get(kvKey) as string | null;
@@ -518,7 +518,7 @@ async function saveProgressToKv(jobId: string, progress: AuditProgress): Promise
 export async function updateStatus(jobId: string, status: AuditProgress['status'], currentPage?: string): Promise<void> {
   // Initialize KV lazily if not already done
   await initializeKv();
-  
+
   // Get progress (checking both memory and KV)
   // CRITICAL: Check memory first to preserve any finalResult that was just set
   let progress = progressStore.get(jobId);
@@ -537,7 +537,7 @@ export async function updateStatus(jobId: string, status: AuditProgress['status'
       console.error('⚠️ Failed to get progress from KV in updateStatus:', e);
     }
   }
-  
+
   // If still no progress, create a minimal one (shouldn't happen, but safety check)
   if (!progress) {
     console.warn(`⚠️ Progress not found for jobId ${jobId} in updateStatus, creating minimal progress`);
@@ -552,26 +552,26 @@ export async function updateStatus(jobId: string, status: AuditProgress['status'
       pageResults: [],
     };
   }
-  
+
   // Preserve finalResult if it exists (don't overwrite it)
   const existingFinalResult = (progress as any).finalResult;
-  
+
   progress.status = status;
   if (currentPage) {
     progress.currentPage = currentPage;
   }
-  
+
   // Restore finalResult if it existed
   if (existingFinalResult) {
     (progress as any).finalResult = existingFinalResult;
   }
-  
+
   // Update in memory FIRST (immediate)
   progressStore.set(jobId, progress);
-  
+
   // Also update in KV if available (persistent storage)
   await saveProgressToKv(jobId, progress);
-  
+
   // Log warning if KV is not available in production
   if (!useKv || !kv) {
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
@@ -587,7 +587,7 @@ export async function updateStatus(jobId: string, status: AuditProgress['status'
  */
 export async function saveFinalResult(jobId: string, finalResult: any): Promise<void> {
   await initializeKv();
-  
+
   // Get current progress
   let progress = progressStore.get(jobId);
   if (!progress && useKv && kv) {
@@ -601,22 +601,22 @@ export async function saveFinalResult(jobId: string, finalResult: any): Promise<
       console.error('⚠️ Failed to get progress from KV in saveFinalResult:', e);
     }
   }
-  
+
   if (!progress) {
     console.error(`❌ Cannot save finalResult - progress not found for jobId: ${jobId}`);
     return;
   }
-  
+
   // Set finalResult
   (progress as any).finalResult = finalResult;
   progress.status = 'completed';
-  
+
   // Save to memory
   progressStore.set(jobId, progress);
-  
+
   // Save to KV
   await saveProgressToKv(jobId, progress);
-  
+
   console.log(`✅ Saved finalResult for jobId: ${jobId}`);
   console.log(`   finalResult keys:`, Object.keys(finalResult || {}));
 }
@@ -627,20 +627,20 @@ export async function saveFinalResult(jobId: string, finalResult: any): Promise<
 export async function getProgress(jobId: string): Promise<AuditProgress | null> {
   // Initialize KV lazily if not already done
   await initializeKv();
-  
+
   // Clean up jobId: remove any "progress:" prefix and trim whitespace
   const cleanJobId = jobId.trim().replace(/^progress:/, '');
   if (cleanJobId !== jobId) {
     console.log(`⚠️ Cleaned jobId: "${jobId}" -> "${cleanJobId}"`);
   }
-  
+
   console.log(`🔍 Getting progress for jobId: ${cleanJobId}`);
   console.log(`🔍 Progress store size: ${progressStore.size}`);
   console.log(`🔍 All jobIds in store: ${Array.from(progressStore.keys()).join(', ')}`);
-  
+
   // Try in-memory first
   let progress = progressStore.get(cleanJobId);
-  
+
   // If not found and KV is available, try KV
   if (!progress && useKv && kv) {
     try {
@@ -672,7 +672,7 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
       console.error('   Error stack:', kvError.stack);
     }
   }
-  
+
   if (!progress) {
     console.log(`❌ Progress not found for jobId: ${cleanJobId}`);
     console.log(`   Available jobIds: ${Array.from(progressStore.keys()).join(', ')}`);
@@ -689,13 +689,13 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
 export async function getAllJobs(): Promise<string[]> {
   // Initialize KV lazily if not already done
   await initializeKv();
-  
+
   if (useKv && kv) {
     try {
       const keys = await kv.keys('audit:*') as string[];
       console.log(`[getAllJobs] Found ${keys.length} keys in KV matching 'audit:*'`);
       console.log(`[getAllJobs] Keys:`, keys.slice(0, 10));
-      
+
       // Extract jobId from keys like "audit:progress:jobId"
       const jobIds = keys
         .map((key: string) => {
@@ -707,7 +707,7 @@ export async function getAllJobs(): Promise<string[]> {
           return key.replace('audit:', '');
         })
         .filter((id: string) => id.length > 0); // Filter out empty strings
-      
+
       console.log(`[getAllJobs] Extracted ${jobIds.length} job IDs:`, jobIds.slice(0, 10));
       return jobIds;
     } catch (error: any) {
@@ -753,3 +753,94 @@ export function cleanupOldProgress(): void {
 
 
 
+/**
+ * Saves a full audit result for a specific page to KV
+ * This allows us to aggregate results later without keeping everything in memory
+ */
+export async function savePageResult(jobId: string, url: string, result: any): Promise<void> {
+  await initializeKv();
+
+  if (useKv && kv) {
+    try {
+      // Create a unique key for this page result
+      // Use hashing or encoding for URL to ensure valid key
+      const safeUrl = Buffer.from(url).toString('base64');
+      const kvKey = `audit:result:${jobId}:${safeUrl}`;
+      const resultJson = JSON.stringify(result);
+
+      await kv.set(kvKey, resultJson, { ex: 3600 * 2 }); // Keep for 2 hours
+      console.log(`✅ Saved page result to KV: ${jobId} / ${url}`);
+    } catch (e: any) {
+      console.error(`❌ Failed to save page result to KV: ${e.message}`);
+    }
+  } else {
+    // Fallback? Ideally we'd store in a Map, but for serverless we really need KV.
+    // We can store it attached to the progress object in memory for local dev.
+    const progress = progressStore.get(jobId);
+    if (progress) {
+      if (!(progress as any)._fullResults) (progress as any)._fullResults = {};
+      (progress as any)._fullResults[url] = result;
+      console.log(`✅ Saved page result to memory (dev mode): ${jobId} / ${url}`);
+    }
+  }
+}
+
+/**
+ * Retrieves a full audit result for a specific page
+ */
+export async function getPageResult(jobId: string, url: string): Promise<any | null> {
+  await initializeKv();
+
+  if (useKv && kv) {
+    try {
+      const safeUrl = Buffer.from(url).toString('base64');
+      const kvKey = `audit:result:${jobId}:${safeUrl}`;
+      const data = await kv.get(kvKey) as string | null;
+
+      if (data) {
+        return JSON.parse(data);
+      }
+    } catch (e: any) {
+      console.error(`❌ Failed to get page result from KV: ${e.message}`);
+    }
+  } else {
+    // Check in-memory fallback
+    const progress = progressStore.get(jobId);
+    if (progress && (progress as any)._fullResults) {
+      return (progress as any)._fullResults[url] || null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Retrieves all available page results for a job
+ */
+export async function getAllPageResults(jobId: string): Promise<any[]> {
+  await initializeKv();
+  const results: any[] = [];
+
+  // Need to know which URLs to look for
+  const progress = await getProgress(jobId);
+  if (!progress) return [];
+
+  console.log(`🔍 Fetching full results for ${progress.completedPages} completed pages...`);
+
+  // Get all completed URLs
+  const completedUrls = progress.pageResults
+    .filter(p => p.status === 'completed')
+    .map(p => p.url);
+
+  // Fetch each one
+  // In a real production app we might optimize this with mget if available, or parallel fetch
+  for (const url of completedUrls) {
+    const result = await getPageResult(jobId, url);
+    if (result) {
+      results.push(result);
+    } else {
+      console.warn(`⚠️ Result missing for completed page: ${url}`);
+    }
+  }
+
+  return results;
+}
