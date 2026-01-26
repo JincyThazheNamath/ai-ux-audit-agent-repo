@@ -54,7 +54,6 @@ function HomeContent() {
     const mockFindings = generateDefaultMockData();
     return generateMockResult(normalizedUrl, mockFindings);
   };
-      // ACCESSIBILITY - All Severities
 
   const handleAudit = async () => {
     if (!url.trim()) {

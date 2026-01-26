@@ -12,16 +12,8 @@ export const runtime = 'nodejs';
 
 // Import waitUntil to keep function alive after response
 // This ensures background work continues even after HTTP response is sent
-let waitUntil: ((promise: Promise<any>) => void) | null = null;
-try {
-  // Try to import waitUntil from @vercel/functions (Vercel Pro/Enterprise)
-  const vercelFunctions = require('@vercel/functions');
-  waitUntil = vercelFunctions.waitUntil;
-  console.log('✅ waitUntil available from @vercel/functions');
-} catch (e) {
-  // Fallback: waitUntil might not be available on all plans
-  console.log('⚠️ waitUntil not available, background work may be terminated after response');
-}
+// Note: waitUntil is only available in Vercel serverless functions
+// We'll import it dynamically inside the function to avoid module loading issues
 
 // Simple UUID generator
 function generateUUID(): string {
@@ -565,37 +557,38 @@ export async function POST(request: NextRequest) {
     // CRITICAL: Use waitUntil to keep function alive after response
     // This ensures Vercel doesn't terminate the background work
     // waitUntil is available in Vercel Pro/Enterprise plans
-    if (waitUntil) {
-      try {
-        waitUntil(backgroundPromise);
+    try {
+      // Dynamically import waitUntil to avoid module loading issues
+      const vercelFunctions = await import('@vercel/functions');
+      if (vercelFunctions.waitUntil) {
+        vercelFunctions.waitUntil(backgroundPromise);
         console.log('✅ Background work registered with waitUntil - will continue after response');
-      } catch (waitError: any) {
-        console.error('❌ Failed to register waitUntil:', waitError.message);
-        // Continue anyway - background promise will still run
+      } else {
+        console.log('⚠️ waitUntil not available - background work may be terminated by Vercel');
         backgroundPromise.catch((error) => {
           console.error('[Background] Background promise rejected:', error);
         });
       }
-    } else {
+    } catch (waitError: any) {
       // Fallback: Start background work but warn that it may be terminated
       backgroundPromise.catch((error) => {
         console.error('[Background] Background promise rejected:', error);
       });
-      console.log('⚠️ waitUntil not available - background work may be terminated by Vercel');
-      console.log('   This is normal on Hobby plan - background work will continue if function stays alive');
-      console.log('   For guaranteed execution, upgrade to Vercel Pro/Enterprise');
-      
-      // CRITICAL FIX: Wait a bit for discovery to start before returning
-      // This gives the background function time to initialize
-      console.log('⏳ Waiting 3 seconds for discovery to initialize...');
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      const earlyCheck = await getProgress(jobId);
-      if (earlyCheck && (earlyCheck.status === 'discovering' || earlyCheck.status === 'auditing')) {
-        console.log(`✅ Discovery started successfully - status: ${earlyCheck.status}`);
-      } else {
-        console.log(`⚠️ Discovery may not have started yet - status: ${earlyCheck?.status || 'unknown'}`);
-      }
+      console.log('⚠️ waitUntil not available (this is normal in local development)');
+      console.log('   Background work will continue but may be terminated by Vercel after response');
+      // Continue anyway - background work may still complete
+    }
+    
+    // CRITICAL FIX: Wait a bit for discovery to start before returning
+    // This gives the background function time to initialize
+    console.log('⏳ Waiting 3 seconds for discovery to initialize...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    const earlyCheck = await getProgress(jobId);
+    if (earlyCheck && (earlyCheck.status === 'discovering' || earlyCheck.status === 'auditing')) {
+      console.log(`✅ Discovery started successfully - status: ${earlyCheck.status}`);
+    } else {
+      console.log(`⚠️ Discovery may not have started yet - status: ${earlyCheck?.status || 'unknown'}`);
     }
 
     // CRITICAL: Verify job exists in Redis/KV before returning (with multiple attempts)
@@ -693,9 +686,35 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error: any) {
-    console.error('Audit error:', error);
+    console.error('❌ Audit error:', error);
+    console.error('   Error name:', error?.name);
+    console.error('   Error message:', error?.message);
+    console.error('   Error stack:', error?.stack);
+    console.error('   Error type:', typeof error);
+    
+    // Provide more detailed error information
+    const errorMessage = error?.message || 'Failed to start full-site audit';
+    const errorDetails = {
+      message: errorMessage,
+      name: error?.name || 'UnknownError',
+      ...(process.env.NODE_ENV === 'development' && {
+        stack: error?.stack,
+        fullError: error?.toString(),
+      }),
+    };
+    
     return NextResponse.json(
-      { error: error.message || 'Failed to start full-site audit' },
+      { 
+        error: errorMessage,
+        details: errorDetails,
+        ...(process.env.NODE_ENV === 'development' && {
+          debug: {
+            errorType: typeof error,
+            hasStack: !!error?.stack,
+            hasMessage: !!error?.message,
+          },
+        }),
+      },
       { status: 500 }
     );
   }
