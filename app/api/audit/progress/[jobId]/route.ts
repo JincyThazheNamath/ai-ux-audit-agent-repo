@@ -133,18 +133,18 @@ export async function GET(
       if (availableJobs.length === 0) {
         if (isProduction && !hasRedisUrl) {
           return NextResponse.json({ 
-            error: 'Job not found',
+            error: 'Service Unavailable',
             jobId,
-            message: 'REDIS_URL is not configured in production. Progress tracking requires Redis to persist across serverless invocations. Please configure REDIS_URL in Vercel (Settings → Environment Variables) or the job may have been created in a different serverless instance.',
+            message: 'Progress tracking requires Redis in production. Please contact the administrator to configure REDIS_URL.',
             debug: {
-              reason: 'No jobs found in progress tracker - REDIS_URL not configured',
+              reason: 'No jobs found - Redis not configured in production',
               storeSize: availableJobs.length,
               extractedJobId: jobId,
-              isProduction,
+              isProduction: true,
               hasRedisUrl: false,
             },
-            fix: 'Configure REDIS_URL environment variable in your Vercel project settings (Settings → Environment Variables)'
-          }, { status: 404 });
+            fix: 'Administrator needs to configure REDIS_URL environment variable in Vercel project settings (Settings → Environment Variables)'
+          }, { status: 503 }); // 503 Service Unavailable instead of 404
         }
         
         return NextResponse.json({ 

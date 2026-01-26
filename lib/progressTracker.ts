@@ -3,6 +3,8 @@
  * Manages audit progress and ETA calculations
  */
 
+import { CONFIG } from './config';
+
 export interface AuditProgress {
   jobId: string;
   status: 'discovering' | 'auditing' | 'aggregating' | 'completed' | 'failed';
@@ -92,7 +94,7 @@ async function initializeKv() {
         const redis = createClient({
           url: process.env.REDIS_URL,
           socket: {
-            connectTimeout: 10000, // 10 second connection timeout
+            connectTimeout: CONFIG.redis.socketTimeout, // Environment-aware timeout
             reconnectStrategy: (retries: number) => {
               if (retries > 3) {
                 console.error(`⚠️ Redis reconnection failed after ${retries} attempts`);
@@ -131,28 +133,30 @@ async function initializeKv() {
             return;
           }
 
-          // If connection was attempted and failed, allow retry (for serverless environments)
-          if (connectionAttempted && connectionError) {
-            console.log('🔄 Retrying Redis connection (previous attempt failed)...');
-            connectionAttempted = false; // Allow retry
-            connectionError = null;
-          }
+          // Exponential backoff retry logic for serverless environments
+          let attempt = 0;
+          const maxRetries = CONFIG.redis.maxRetries;
+          const baseDelay = CONFIG.redis.retryDelay.base;
+          const maxDelay = CONFIG.redis.retryDelay.max;
+          const connectionTimeout = CONFIG.redis.connectionTimeout;
 
-          if (!connected && !connectionAttempted) {
-            connectionAttempted = true;
+          while (attempt < maxRetries) {
             try {
-              console.log('🔌 Attempting Redis connection...');
+              console.log(`🔌 Attempting Redis connection (attempt ${attempt + 1}/${maxRetries})...`);
+              console.log(`   Timeout: ${connectionTimeout / 1000}s`);
               console.log('   REDIS_URL present:', !!process.env.REDIS_URL);
 
               // Connect using Vercel's pattern: await createClient().connect()
-              // Set a connection timeout
+              // Set environment-aware connection timeout
               const connectPromise = redis.connect();
               const timeoutPromise = new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Redis connection timeout after 10 seconds')), 10000)
+                setTimeout(() => reject(new Error(`Redis connection timeout after ${connectionTimeout / 1000} seconds`)), connectionTimeout)
               );
 
               await Promise.race([connectPromise, timeoutPromise]);
               connected = true;
+              connectionAttempted = true;
+              connectionError = null;
               console.log('✅ Redis connected successfully');
 
               // Test connection with a ping
@@ -162,19 +166,41 @@ async function initializeKv() {
               } catch (pingError: any) {
                 console.warn('⚠️ Redis ping failed, but connection seems OK:', pingError.message);
               }
+              
+              return; // Success - exit retry loop
             } catch (err: any) {
+              attempt++;
               connectionError = err;
               connected = false;
-              console.error('❌ Failed to connect to Redis:', err.message);
+              console.error(`❌ Redis connection attempt ${attempt} failed:`, err.message);
               console.error('   Error code:', err.code);
               console.error('   Error name:', err.name);
-              console.error('   Full error:', err);
-              // Don't throw - allow fallback to in-memory storage
-              // The error will be logged and the function will continue
+
+              // If this isn't the last attempt, wait before retrying
+              if (attempt < maxRetries) {
+                const delay = Math.min(
+                  baseDelay * Math.pow(2, attempt - 1), // Exponential backoff: 1s, 2s, 4s
+                  maxDelay
+                );
+                console.log(`⚠️ Retrying Redis connection in ${delay}ms... (${attempt}/${maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+              } else {
+                console.error('❌ Redis connection failed after all retry attempts');
+                console.error('   Full error:', err);
+              }
             }
           }
 
-          // If still not connected after attempt, throw error
+          // If still not connected after all retries, throw error in production
+          const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+          if (isProduction && connectionError) {
+            throw new Error(`Redis connection failed after ${maxRetries} attempts: ${connectionError.message}`);
+          }
+          
+          // In development, allow fallback to in-memory storage
+          if (!isProduction) {
+            console.warn('⚠️ Redis connection failed - falling back to in-memory storage (dev only)');
+          }
           if (!connected && connectionAttempted) {
             throw connectionError || new Error('Redis connection failed');
           }
@@ -220,19 +246,31 @@ async function initializeKv() {
       }
     }
 
-    // Check if we're in production and provide helpful guidance
+    // Enhanced production validation with better error handling
     const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+    const hasRedisUrl = !!process.env.REDIS_URL;
 
     if (isProduction) {
-      console.error('❌ CRITICAL: REDIS_URL is not configured in production!');
-      console.error('   Please set REDIS_URL environment variable in Vercel');
-      console.error('   → Go to Vercel Dashboard → Settings → Environment Variables');
-      console.error('   → Add REDIS_URL with your Redis Labs connection string');
-      console.error('   Example: redis://default:password@host:port');
-      console.error('   Progress tracking will NOT persist across serverless invocations without Redis');
+      if (!hasRedisUrl) {
+        console.error('❌ CRITICAL: REDIS_URL is not configured in production!');
+        console.error('   This will cause progress tracking to fail.');
+        console.error('   Please set REDIS_URL environment variable in Vercel Dashboard.');
+        console.error('   → Go to Vercel Dashboard → Settings → Environment Variables');
+        console.error('   → Add REDIS_URL with your Redis Labs connection string');
+        console.error('   Example: redis://default:password@host:port');
+        console.error('   Progress tracking will NOT persist across serverless invocations without Redis');
+        // Don't throw during initialization - let it fail gracefully when actually trying to use Redis
+        // This prevents app crashes during build/startup
+      } else {
+        console.log('✅ REDIS_URL is configured for production');
+        console.log(`   Connection timeout: ${CONFIG.redis.connectionTimeout / 1000} seconds`);
+        console.log(`   Retry attempts: ${CONFIG.redis.maxRetries} with exponential backoff`);
+      }
     } else {
-      console.log('⚠️ REDIS_URL is not set');
-      console.log('   Progress tracking will use in-memory storage (may not persist in serverless)');
+      console.log(`${hasRedisUrl ? '✅' : '⚠️'} REDIS_URL ${hasRedisUrl ? 'present' : 'missing'} in development`);
+      if (!hasRedisUrl) {
+        console.log('   Progress tracking will use in-memory storage (may not persist in serverless)');
+      }
     }
     kvInitialized = true;
   } catch (e: any) {
