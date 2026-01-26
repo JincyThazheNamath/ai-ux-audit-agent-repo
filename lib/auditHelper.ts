@@ -529,43 +529,191 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
       }
       
       if (jsonString) {
-        // Clean JSON string: remove control characters that cause parsing errors
-        // Remove control characters (except newlines, tabs, carriage returns)
-        jsonString = jsonString.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
-        // Replace any remaining problematic characters
-        jsonString = jsonString.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        // Enhanced JSON repair function
+        const repairJSON = (str: string): string => {
+          let result = str;
+          
+          // Step 1: Remove control characters (except newlines, tabs, carriage returns)
+          result = result.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
+          
+          // Step 2: Normalize line endings
+          result = result.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+          
+          // Step 3: Fix invalid escape sequences in string values
+          // JSON only allows: \" \\ \/ \b \f \n \r \t \uXXXX
+          // We need to fix invalid escapes like \x, \z, etc.
+          // Use a simpler approach: find and fix invalid escapes inside strings
+          let fixed = '';
+          let inString = false;
+          let i = 0;
+          
+          while (i < result.length) {
+            const char = result[i];
+            const nextChar = result[i + 1];
+            
+            if (char === '"' && (i === 0 || result[i - 1] !== '\\' || (i > 1 && result[i - 2] === '\\'))) {
+              // Toggle string state (handle escaped quotes properly)
+              const backslashCount = (() => {
+                let count = 0;
+                let j = i - 1;
+                while (j >= 0 && result[j] === '\\') {
+                  count++;
+                  j--;
+                }
+                return count;
+              })();
+              
+              // If even number of backslashes before quote, it's a real quote
+              if (backslashCount % 2 === 0) {
+                inString = !inString;
+              }
+              fixed += char;
+              i++;
+              continue;
+            }
+            
+            if (char === '\\' && inString) {
+              // We're inside a string and found a backslash
+              if (nextChar && /["\\/bfnrtu]/.test(nextChar)) {
+                // Valid escape sequence - keep it
+                fixed += char + nextChar;
+                i += 2;
+              } else if (nextChar && nextChar === 'u' && /[0-9a-fA-F]/.test(result[i + 2]) && /[0-9a-fA-F]/.test(result[i + 3]) && /[0-9a-fA-F]/.test(result[i + 4]) && /[0-9a-fA-F]/.test(result[i + 5])) {
+                // Valid unicode escape \uXXXX
+                fixed += result.substring(i, i + 6);
+                i += 6;
+              } else if (nextChar) {
+                // Invalid escape sequence - escape the backslash itself
+                fixed += '\\\\' + nextChar;
+                i += 2;
+              } else {
+                // Backslash at end of string - escape it
+                fixed += '\\\\';
+                i++;
+              }
+              continue;
+            }
+            
+            if (inString && (char === '\n' || char === '\r' || char === '\t')) {
+              // Replace literal newlines/tabs in strings with escaped versions
+              if (char === '\n') {
+                fixed += '\\n';
+              } else if (char === '\r') {
+                fixed += '\\r';
+              } else if (char === '\t') {
+                fixed += '\\t';
+              }
+              i++;
+              continue;
+            }
+            
+            fixed += char;
+            i++;
+          }
+          
+          result = fixed;
+          
+          // Step 4: Fix trailing commas before } or ]
+          result = result.replace(/,(\s*[}\]])/g, '$1');
+          
+          // Step 5: Fix missing commas between objects
+          result = result.replace(/}\s*{/g, '},{');
+          
+          // Step 6: Fix missing commas between array elements
+          result = result.replace(/\]\s*\[/g, '],[');
+          
+          // Step 7: Fix invalid escape sequences
+          // Replace invalid escapes (not followed by valid escape char) with escaped backslash + char
+          // Valid JSON escapes: \" \\ \/ \b \f \n \r \t \uXXXX
+          result = result.replace(/\\(?![\\"/bfnrtu]|u[0-9a-fA-F]{4})/g, (match, offset, str) => {
+            // If we're inside a string and hit an invalid escape, escape the backslash
+            // Check if we're inside a string by counting quotes before this position
+            const before = str.substring(0, offset);
+            const quoteCount = (before.match(/"/g) || []).length;
+            const inString = quoteCount % 2 === 1;
+            
+            if (inString) {
+              // Inside string: replace \x with \\x (escape the backslash)
+              const nextChar = str[offset + 1];
+              return nextChar ? `\\\\${nextChar}` : '\\\\';
+            } else {
+              // Outside string: just remove the backslash (might be part of path/regex)
+              return str[offset + 1] || '';
+            }
+          });
+          
+          return result;
+        };
         
-          // Try to repair common JSON issues
-          // Fix trailing commas before } or ] (most common issue)
-          jsonString = jsonString.replace(/,(\s*[}\]])/g, '$1');
-          // Fix missing commas between objects
-          jsonString = jsonString.replace(/}\s*{/g, '},{');
-          // Fix unescaped quotes in string values (conservative approach)
-          // Only fix quotes that are clearly inside string values and not escaped
-          // Pattern: "key": "value with "unclosed quote" -> "key": "value with \"escaped quote\""
-          // This is a simplified fix - we'll rely on the partial extraction fallback for complex cases
+        // Apply JSON repair
+        let cleanedJSON = repairJSON(jsonString);
         
         try {
-          findings = JSON.parse(jsonString);
+          findings = JSON.parse(cleanedJSON);
           console.log(`  ✅ Successfully parsed ${findings.length} findings`);
         } catch (parseError: any) {
           console.error('  ❌ Error parsing cleaned JSON:', parseError.message);
-          console.error('  JSON string length:', jsonString.length);
+          console.error('  JSON string length:', cleanedJSON.length);
           
-          // Try to extract partial findings by finding valid JSON objects
+          // Try a more aggressive repair: extract and fix individual objects
           try {
-            const objectMatches = jsonString.match(/\{[^{}]*"category"[\s\S]*?\}/g);
-            if (objectMatches && objectMatches.length > 0) {
+            // More sophisticated object extraction that handles nested structures
+            const objectMatches: string[] = [];
+            let depth = 0;
+            let start = -1;
+            let inString = false;
+            let escapeNext = false;
+            
+            for (let i = 0; i < jsonString.length; i++) {
+              const char = jsonString[i];
+              
+              if (escapeNext) {
+                escapeNext = false;
+                continue;
+              }
+              
+              if (char === '\\') {
+                escapeNext = true;
+                continue;
+              }
+              
+              if (char === '"') {
+                inString = !inString;
+                continue;
+              }
+              
+              if (!inString) {
+                if (char === '{') {
+                  if (depth === 0) {
+                    start = i;
+                  }
+                  depth++;
+                } else if (char === '}') {
+                  depth--;
+                  if (depth === 0 && start !== -1) {
+                    // Found a complete object
+                    const objStr = jsonString.substring(start, i + 1);
+                    // Check if it looks like a finding object
+                    if (objStr.includes('"category"') || objStr.includes('"issue"')) {
+                      objectMatches.push(objStr);
+                    }
+                    start = -1;
+                  }
+                }
+              }
+            }
+            
+            if (objectMatches.length > 0) {
               console.log(`  🔧 Attempting to extract ${objectMatches.length} individual findings...`);
               findings = objectMatches.map((objStr: string) => {
                 try {
-                  // Fix trailing commas in individual objects
-                  const fixed = objStr.replace(/,(\s*})/g, '$1');
+                  // Apply repair to individual object
+                  const fixed = repairJSON(objStr);
                   return JSON.parse(fixed);
-                } catch {
+                } catch (e) {
                   return null;
                 }
-              }).filter((f: any) => f !== null) as AuditFinding[];
+              }).filter((f: any) => f !== null && f.category && f.issue) as AuditFinding[];
               
               if (findings.length > 0) {
                 console.log(`  ✅ Extracted ${findings.length} valid findings from partial JSON`);
@@ -576,8 +724,13 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
               throw parseError;
             }
           } catch (extractError) {
-            console.error('  JSON preview (first 500 chars):', jsonString.substring(0, 500));
-            console.error('  JSON around error position:', jsonString.substring(Math.max(0, 2200), 2300));
+            // Log more context around the error position
+            const errorMatch = parseError.message.match(/position (\d+)/);
+            const errorPos = errorMatch ? parseInt(errorMatch[1]) : 640;
+            const startPos = Math.max(0, errorPos - 100);
+            const endPos = Math.min(cleanedJSON.length, errorPos + 100);
+            console.error('  JSON preview (first 500 chars):', cleanedJSON.substring(0, 500));
+            console.error(`  JSON around error position (${errorPos}):`, cleanedJSON.substring(startPos, endPos));
             throw parseError;
           }
         }
