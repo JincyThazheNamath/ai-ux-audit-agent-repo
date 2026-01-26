@@ -26,7 +26,7 @@ if (!apiKey || apiKey.trim() === '') {
 /**
  * Launches browser with appropriate configuration
  */
-async function launchBrowser() {
+export async function launchBrowser() {
   const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
   
   console.log(`  [Browser] Environment: ${isProduction ? 'PRODUCTION (Vercel)' : 'DEVELOPMENT'}`);

@@ -254,8 +254,9 @@ export async function POST(request: NextRequest) {
             // CRITICAL: Test browser launch before starting batch processing
             console.log(`[Background] 🧪 Testing browser launch before batch processing...`);
             try {
-              const { launchBrowser } = require('../../../../lib/auditHelper');
-              const testBrowserPromise = launchBrowser();
+              // Import launchBrowser dynamically to avoid circular dependencies
+              const auditHelper = await import('../../../../lib/auditHelper');
+              const testBrowserPromise = auditHelper.launchBrowser();
               const testTimeoutPromise = new Promise<never>((_, reject) => 
                 setTimeout(() => reject(new Error('Browser test timeout after 20 seconds')), 20000)
               );
