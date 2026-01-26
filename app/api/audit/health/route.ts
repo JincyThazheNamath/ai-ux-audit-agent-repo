@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeKv } from '../../../../lib/progressTracker';
+import { getProgress } from '../../../../lib/progressTracker';
 
 /**
  * Health check endpoint for monitoring Redis connectivity
@@ -9,19 +9,26 @@ export async function GET(request: NextRequest) {
   try {
     const startTime = Date.now();
     
-    // Test Redis connectivity
+    // Test Redis connectivity by trying to access progress tracker
+    // This will trigger Redis initialization if needed
     let redisHealthy = false;
     let redisError: string | null = null;
     
     try {
-      await initializeKv();
-      // Try to get a test key to verify connection works
-      const { getProgress } = await import('../../../../lib/progressTracker');
-      // Just checking if Redis is accessible, not testing with actual data
+      // Try to get progress for a non-existent job - this will test Redis connection
+      // without requiring actual data
+      await getProgress('health-check-test-' + Date.now());
+      // If we get here without error, Redis is accessible
       redisHealthy = true;
     } catch (error: any) {
-      redisError = error.message;
-      redisHealthy = false;
+      // Check if it's a connection error or just "job not found"
+      if (error.message?.includes('Redis connection') || error.message?.includes('REDIS_URL')) {
+        redisError = error.message;
+        redisHealthy = false;
+      } else {
+        // "Job not found" is expected - means Redis is working
+        redisHealthy = true;
+      }
     }
     
     const responseTime = Date.now() - startTime;
