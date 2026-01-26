@@ -85,53 +85,27 @@ async function initializeKv() {
       console.log('   REDIS_URL starts with redis://:', process.env.REDIS_URL?.startsWith('redis://'));
       
       try {
-        // Suppress Node.js deprecation warning for url.parse() used by ioredis
-        // This is a known issue with ioredis v5.x - it will be fixed in future versions
-        // We suppress it by intercepting the warning
-        const originalEmitWarning = process.emitWarning;
-        // @ts-expect-error - TypeScript doesn't like overriding emitWarning signature, but it works at runtime
-        process.emitWarning = function(warning: any, typeOrOptions?: any, code?: string, ctor?: Function) {
-          // Suppress DEP0169 deprecation warning about url.parse()
-          const warningStr = typeof warning === 'string' ? warning : warning?.message || '';
-          const warningCode = typeof warning === 'object' ? warning?.code : code;
-          
-          if (warningCode === 'DEP0169' || warningStr.includes('url.parse()')) {
-            return; // Suppress this specific warning
-          }
-          
-          // Call original with proper arguments
-          if (typeof typeOrOptions === 'object' && typeOrOptions !== null) {
-            return (originalEmitWarning as any).call(process, warning, typeOrOptions);
-          } else if (typeof typeOrOptions === 'string') {
-            return (originalEmitWarning as any).call(process, warning, typeOrOptions, code, ctor);
-          } else {
-            return (originalEmitWarning as any).call(process, warning);
-          }
-        };
+        // Use official redis package as per Vercel's guide
+        const { createClient } = require('redis');
         
-        // Lazy import - only when needed and in runtime context
-        const Redis = require('ioredis');
-        
-        // Create Redis instance (may emit warning during constructor)
-        const redis = new Redis(process.env.REDIS_URL, {
-          maxRetriesPerRequest: 3,
-          lazyConnect: true, // Don't connect immediately
-          connectTimeout: 10000, // 10 second connection timeout
-          retryStrategy: (times: number) => {
-            if (times > 3) {
-              console.error(`⚠️ Redis connection failed after ${times} attempts`);
-              return null; // Stop retrying
+        // Create Redis client (following Vercel's pattern)
+        const redis = createClient({
+          url: process.env.REDIS_URL,
+          socket: {
+            connectTimeout: 10000, // 10 second connection timeout
+            reconnectStrategy: (retries: number) => {
+              if (retries > 3) {
+                console.error(`⚠️ Redis reconnection failed after ${retries} attempts`);
+                return false; // Stop retrying
+              }
+              const delay = Math.min(retries * 50, 2000); // Exponential backoff
+              console.log(`   Redis reconnect attempt ${retries}, waiting ${delay}ms...`);
+              return delay;
             }
-            const delay = Math.min(times * 50, 2000); // Exponential backoff
-            console.log(`   Redis retry attempt ${times}, waiting ${delay}ms...`);
-          return delay;
-        }
-      });
-      
-      // Restore original emitWarning after Redis is created
-      process.emitWarning = originalEmitWarning;
-      
-      // Add error handlers for better debugging
+          }
+        });
+        
+        // Add error handlers for better debugging
         redis.on('error', (err: any) => {
           console.error('❌ Redis connection error:', err.message);
           console.error('   Error code:', err.code);
@@ -153,7 +127,7 @@ async function initializeKv() {
         
         async function ensureConnected() {
           // If already connected, return immediately
-          if (connected) {
+          if (connected && redis.isOpen && redis.isReady) {
             return;
           }
           
@@ -170,6 +144,7 @@ async function initializeKv() {
               console.log('🔌 Attempting Redis connection...');
               console.log('   REDIS_URL present:', !!process.env.REDIS_URL);
               
+              // Connect using Vercel's pattern: await createClient().connect()
               // Set a connection timeout
               const connectPromise = redis.connect();
               const timeoutPromise = new Promise<never>((_, reject) => 
@@ -216,7 +191,7 @@ async function initializeKv() {
           await ensureConnected();
           if (options?.ex) {
             // Redis SETEX: set with expiration in seconds
-            return await redis.setex(key, options.ex, value);
+            return await redis.setEx(key, options.ex, value);
           }
           return await redis.set(key, value);
         },
