@@ -551,19 +551,17 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
             const char = result[i];
             const nextChar = result[i + 1];
             
-            if (char === '"' && (i === 0 || result[i - 1] !== '\\' || (i > 1 && result[i - 2] === '\\'))) {
-              // Toggle string state (handle escaped quotes properly)
-              const backslashCount = (() => {
-                let count = 0;
-                let j = i - 1;
-                while (j >= 0 && result[j] === '\\') {
-                  count++;
-                  j--;
-                }
-                return count;
-              })();
+            if (char === '"') {
+              // Check if this quote is escaped by counting consecutive backslashes before it
+              let backslashCount = 0;
+              let j = i - 1;
+              while (j >= 0 && result[j] === '\\') {
+                backslashCount++;
+                j--;
+              }
               
-              // If even number of backslashes before quote, it's a real quote
+              // If even number of backslashes (or zero), the quote is not escaped
+              // If odd number, the quote is escaped (part of string content)
               if (backslashCount % 2 === 0) {
                 inString = !inString;
               }
@@ -622,27 +620,66 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
           // Step 6: Fix missing commas between array elements
           result = result.replace(/\]\s*\[/g, '],[');
           
-          // Step 7: Fix invalid escape sequences
-          // Replace invalid escapes (not followed by valid escape char) with escaped backslash + char
-          // Valid JSON escapes: \" \\ \/ \b \f \n \r \t \uXXXX
-          result = result.replace(/\\(?![\\"/bfnrtu]|u[0-9a-fA-F]{4})/g, (match, offset, str) => {
-            // If we're inside a string and hit an invalid escape, escape the backslash
-            // Check if we're inside a string by counting quotes before this position
-            const before = str.substring(0, offset);
-            const quoteCount = (before.match(/"/g) || []).length;
-            const inString = quoteCount % 2 === 1;
-            
-            if (inString) {
-              // Inside string: replace \x with \\x (escape the backslash)
-              const nextChar = str[offset + 1];
-              return nextChar ? `\\\\${nextChar}` : '\\\\';
-            } else {
-              // Outside string: just remove the backslash (might be part of path/regex)
-              return str[offset + 1] || '';
-            }
-          });
+          // Step 7: Final pass to fix any remaining invalid escape sequences
+          // This is a more reliable approach that properly tracks string state
+          let finalResult = '';
+          let finalInString = false;
+          let finalEscapeNext = false;
           
-          return result;
+          for (let i = 0; i < result.length; i++) {
+            const char = result[i];
+            const nextChar = result[i + 1];
+            
+            if (finalEscapeNext) {
+              // Previous char was a backslash - this char is being escaped
+              // Check if it's a valid escape sequence
+              if (/["\\/bfnrtu]/.test(char)) {
+                // Valid escape - keep it
+                finalResult += '\\' + char;
+              } else if (char === 'u' && i + 5 < result.length && /[0-9a-fA-F]{4}/.test(result.substring(i + 1, i + 5))) {
+                // Valid unicode escape
+                finalResult += '\\u' + result.substring(i + 1, i + 5);
+                i += 4; // Skip the 4 hex digits
+              } else {
+                // Invalid escape - escape the backslash itself
+                finalResult += '\\\\' + char;
+              }
+              finalEscapeNext = false;
+              continue;
+            }
+            
+            if (char === '\\') {
+              finalEscapeNext = true;
+              continue;
+            }
+            
+            if (char === '"') {
+              finalInString = !finalInString;
+              finalResult += char;
+              continue;
+            }
+            
+            // If we're in a string and find a control character, escape it
+            if (finalInString && (char === '\n' || char === '\r' || char === '\t')) {
+              if (char === '\n') {
+                finalResult += '\\n';
+              } else if (char === '\r') {
+                finalResult += '\\r';
+              } else if (char === '\t') {
+                finalResult += '\\t';
+              }
+              continue;
+            }
+            
+            finalResult += char;
+          }
+          
+          // Handle trailing backslash
+          if (finalEscapeNext) {
+            finalResult += '\\\\';
+          }
+          
+          return finalResult;
         };
         
         // Apply JSON repair
@@ -727,11 +764,45 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
             // Log more context around the error position
             const errorMatch = parseError.message.match(/position (\d+)/);
             const errorPos = errorMatch ? parseInt(errorMatch[1]) : 640;
-            const startPos = Math.max(0, errorPos - 100);
-            const endPos = Math.min(cleanedJSON.length, errorPos + 100);
+            const startPos = Math.max(0, errorPos - 150);
+            const endPos = Math.min(cleanedJSON.length, errorPos + 150);
+            
             console.error('  JSON preview (first 500 chars):', cleanedJSON.substring(0, 500));
-            console.error(`  JSON around error position (${errorPos}):`, cleanedJSON.substring(startPos, endPos));
-            throw parseError;
+            console.error(`  JSON around error position (${errorPos}):`);
+            console.error('  Context:', cleanedJSON.substring(startPos, endPos));
+            console.error(`  Character at error position: "${cleanedJSON[errorPos]}" (char code: ${cleanedJSON.charCodeAt(errorPos)})`);
+            console.error(`  Previous 10 chars: "${cleanedJSON.substring(Math.max(0, errorPos - 10), errorPos)}"`);
+            console.error(`  Next 10 chars: "${cleanedJSON.substring(errorPos + 1, Math.min(cleanedJSON.length, errorPos + 11))}"`);
+            
+            // Try one more time with even more aggressive repair
+            try {
+              console.log('  🔧 Attempting ultra-aggressive JSON repair...');
+              // Remove all backslashes that aren't part of valid escape sequences
+              let ultraFixed = cleanedJSON;
+              // Find and fix all invalid escapes more aggressively
+              ultraFixed = ultraFixed.replace(/\\(?![\\"/bfnrtu]|u[0-9a-fA-F]{4})/g, (match, offset) => {
+                // Check if we're in a string by properly parsing
+                let inStr = false;
+                let escaped = false;
+                for (let j = 0; j < offset; j++) {
+                  if (!escaped && ultraFixed[j] === '"') {
+                    inStr = !inStr;
+                  }
+                  escaped = !escaped && ultraFixed[j] === '\\';
+                }
+                if (inStr) {
+                  const next = ultraFixed[offset + 1];
+                  return next ? `\\\\${next}` : '\\\\';
+                }
+                return ultraFixed[offset + 1] || '';
+              });
+              
+              findings = JSON.parse(ultraFixed);
+              console.log(`  ✅ Ultra-aggressive repair succeeded: ${findings.length} findings`);
+            } catch (ultraError) {
+              console.error('  ❌ Ultra-aggressive repair also failed');
+              throw parseError;
+            }
           }
         }
       } else {
