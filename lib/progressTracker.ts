@@ -253,12 +253,12 @@ export async function debugProgressStore(): Promise<void> {
   await initializeKv();
 
   if (useKv && kv) {
-    const allKeys = await kv.keys('audit:*') as string[];
+    const allKeys = await kv.keys('audit:progress:*') as string[];
     console.log('📊 Progress Store Debug (KV):');
     console.log('   Total jobs:', allKeys.length);
-    console.log('   Job IDs:', allKeys.map((k: string) => k.replace('audit:', '')));
+    console.log('   Job IDs:', allKeys.map((k: string) => k.replace('audit:progress:', '')));
     for (const key of allKeys) {
-      const jobId = key.replace('audit:', '');
+      const jobId = key.replace('audit:progress:', '');
       const progress = await getProgress(jobId);
       if (progress) {
         console.log(`   - ${jobId}: ${progress.status} (${progress.completedPages}/${progress.totalPages})`);
@@ -692,20 +692,13 @@ export async function getAllJobs(): Promise<string[]> {
 
   if (useKv && kv) {
     try {
-      const keys = await kv.keys('audit:*') as string[];
-      console.log(`[getAllJobs] Found ${keys.length} keys in KV matching 'audit:*'`);
+      const keys = await kv.keys('audit:progress:*') as string[];
+      console.log(`[getAllJobs] Found ${keys.length} keys in KV matching 'audit:progress:*'`);
       console.log(`[getAllJobs] Keys:`, keys.slice(0, 10));
 
       // Extract jobId from keys like "audit:progress:jobId"
       const jobIds = keys
-        .map((key: string) => {
-          // Key format: audit:progress:${jobId}
-          if (key.startsWith('audit:progress:')) {
-            return key.replace('audit:progress:', '');
-          }
-          // Fallback: remove 'audit:' prefix (for any other audit:* keys)
-          return key.replace('audit:', '');
-        })
+        .map((key: string) => key.replace('audit:progress:', ''))
         .filter((id: string) => id.length > 0); // Filter out empty strings
 
       console.log(`[getAllJobs] Extracted ${jobIds.length} job IDs:`, jobIds.slice(0, 10));
