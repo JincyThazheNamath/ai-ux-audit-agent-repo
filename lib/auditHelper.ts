@@ -105,7 +105,13 @@ async function launchBrowser() {
   }
 
   try {
-    const browser = await puppeteer.launch(launchOptions);
+    // Add timeout wrapper for browser launch
+    const launchPromise = puppeteer.launch(launchOptions);
+    const launchTimeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Browser launch timeout after 30 seconds')), 30000)
+    );
+    
+    const browser = await Promise.race([launchPromise, launchTimeoutPromise]);
     console.log(`  ✅ Browser launched successfully`);
     return browser;
   } catch (error: any) {
@@ -130,13 +136,19 @@ async function launchBrowser() {
 /**
  * Audits a single page
  */
-export async function auditSinglePage(url: string): Promise<AuditResult> {
+export async function auditSinglePage(url: string, abortSignal?: AbortSignal): Promise<AuditResult> {
   let browser: any = null;
   
   try {
+    // Check if aborted before starting
+    if (abortSignal?.aborted) {
+      throw new Error('Audit aborted before starting');
+    }
+    
     const targetUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
     console.log(`  🔍 Starting audit for: ${targetUrl.toString()}`);
     console.log(`  📅 Timestamp: ${new Date().toISOString()}`);
+    console.log(`  🛑 Abort signal: ${abortSignal ? 'monitoring' : 'not provided'}`);
     
     // Launch browser with retry logic and timeout
     console.log(`  🌐 Launching browser...`);
@@ -145,6 +157,11 @@ export async function auditSinglePage(url: string): Promise<AuditResult> {
     const BROWSER_LAUNCH_TIMEOUT = 30000; // 30 seconds max for browser launch
     
     while (browserLaunchAttempts < maxBrowserAttempts) {
+      // Check if aborted
+      if (abortSignal?.aborted) {
+        throw new Error('Audit aborted during browser launch');
+      }
+      
       try {
         // Wrap browser launch in timeout
         const launchPromise = launchBrowser();
@@ -160,6 +177,11 @@ export async function auditSinglePage(url: string): Promise<AuditResult> {
         console.error(`  ⚠️ Browser launch attempt ${browserLaunchAttempts}/${maxBrowserAttempts} failed: ${browserError.message}`);
         console.error(`  Error type: ${browserError.name}`);
         console.error(`  Error code: ${browserError.code || 'N/A'}`);
+        
+        // Check if aborted
+        if (abortSignal?.aborted) {
+          throw new Error('Audit aborted during browser launch retry');
+        }
         
         if (browserLaunchAttempts >= maxBrowserAttempts) {
           console.error(`  ❌ All browser launch attempts failed`);
@@ -179,10 +201,28 @@ export async function auditSinglePage(url: string): Promise<AuditResult> {
       throw new Error('Browser launch failed: browser is null after all attempts');
     }
     
+    // Check if aborted after browser launch
+    if (abortSignal?.aborted) {
+      await browser.close();
+      throw new Error('Audit aborted after browser launch');
+    }
+    
     console.log(`  ✅ Browser ready for page navigation`);
+    
+    // Check if aborted before creating page
+    if (abortSignal?.aborted) {
+      await browser.close();
+      throw new Error('Audit aborted before page creation');
+    }
     
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080 });
+    
+    // Check if aborted before navigation
+    if (abortSignal?.aborted) {
+      await browser.close();
+      throw new Error('Audit aborted before page navigation');
+    }
     
     // Navigate to page with aggressive timeouts to prevent hanging
     console.log(`  📄 Loading page: ${targetUrl.toString()}`);

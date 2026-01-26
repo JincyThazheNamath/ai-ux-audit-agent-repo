@@ -251,6 +251,35 @@ export async function POST(request: NextRequest) {
           console.log(`[Background] ✅ Pre-batch page results count: ${preBatchStatus.pageResults.length}`);
           
           try {
+            // CRITICAL: Test browser launch before starting batch processing
+            console.log(`[Background] 🧪 Testing browser launch before batch processing...`);
+            try {
+              const { launchBrowser } = require('../../../../lib/auditHelper');
+              const testBrowserPromise = launchBrowser();
+              const testTimeoutPromise = new Promise<never>((_, reject) => 
+                setTimeout(() => reject(new Error('Browser test timeout after 20 seconds')), 20000)
+              );
+              
+              const testBrowser = await Promise.race([testBrowserPromise, testTimeoutPromise]);
+              await testBrowser.close();
+              console.log(`[Background] ✅ Browser test successful - batch processing can proceed`);
+            } catch (browserTestError: any) {
+              console.error(`[Background] ❌ Browser test failed: ${browserTestError.message}`);
+              console.error(`[Background] ⚠️ Batch processing will likely fail - browser cannot launch`);
+              console.error(`[Background] Error details:`, browserTestError);
+              
+              // Mark all pages as failed immediately
+              const progress = await getProgress(jobId);
+              if (progress) {
+                console.log(`[Background] Marking ${progress.pageResults.length} pages as failed due to browser test failure...`);
+                for (const page of progress.pageResults) {
+                  await updatePageProgress(jobId, page.url, 'failed');
+                }
+              }
+              
+              throw new Error(`Browser launch test failed: ${browserTestError.message}. Cannot proceed with batch processing.`);
+            }
+            
             console.log(`[Background] 🔄 Calling processBatches with ${pageUrls.slice(0, actualPageCount).length} pages...`);
             console.log(`[Background] Batch processing start timestamp: ${new Date().toISOString()}`);
             

@@ -127,71 +127,97 @@ function categorizeError(error: any): { type: FailedPage['errorType'], retryable
 async function auditSinglePageWithRetry(
   url: string,
   jobId: string,
-  config: BatchConfig
+  config: BatchConfig,
+  abortSignal?: AbortSignal
 ): Promise<AuditResult> {
   console.log(`[auditSinglePageWithRetry] 🚀 Starting audit for ${url}`);
   console.log(`[auditSinglePageWithRetry] Job ID: ${jobId}`);
   console.log(`[auditSinglePageWithRetry] Max retries: ${config.maxRetries}`);
   console.log(`[auditSinglePageWithRetry] Timeout: ${config.timeoutPerPage}ms`);
+  console.log(`[auditSinglePageWithRetry] Abort signal: ${abortSignal ? 'provided' : 'not provided'}`);
+  
+  // Create internal abort controller if not provided
+  const internalAbortController = abortSignal ? null : new AbortController();
+  const signal = abortSignal || internalAbortController!.signal;
+  
+  // Set timeout to abort if takes too long
+  let abortTimeout: NodeJS.Timeout | null = null;
+  if (!abortSignal && internalAbortController) {
+    abortTimeout = setTimeout(() => {
+      console.error(`[auditSinglePageWithRetry] ⚠️ Aborting audit for ${url} - exceeded timeout`);
+      internalAbortController.abort();
+    }, config.timeoutPerPage + 5000); // 5 seconds buffer
+  }
   
   let lastError: Error | null = null;
   let lastErrorCategory: { type: FailedPage['errorType'], retryable: boolean, message: string } | null = null;
   
-  for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
-    console.log(`[auditSinglePageWithRetry] Attempt ${attempt}/${config.maxRetries} for ${url}`);
-    
-    try {
-      // Update progress to processing
-      console.log(`[auditSinglePageWithRetry] Updating progress to 'processing'...`);
-      await updatePageProgress(jobId, url, 'processing');
-      await updateStatus(jobId, 'auditing', url);
-      console.log(`[auditSinglePageWithRetry] ✅ Progress updated`);
-      
-      // Create timeout promise
-      const timeoutPromise = new Promise<AuditResult>((_, reject) => 
-        setTimeout(() => reject(new Error(`Timeout: Page took longer than ${config.timeoutPerPage}ms`)), config.timeoutPerPage)
-      );
-      
-      console.log(`[auditSinglePageWithRetry] Calling auditSinglePage...`);
-      const auditStartTime = Date.now();
-      
-      // Race between audit and timeout
-      const result = await Promise.race([
-        auditSinglePage(url),
-        timeoutPromise
-      ]);
-      
-      const auditDuration = Date.now() - auditStartTime;
-      console.log(`[auditSinglePageWithRetry] ✅ Audit completed in ${auditDuration}ms`);
-      
-      return result;
-    } catch (error: any) {
-      lastError = error;
-      lastErrorCategory = categorizeError(error);
-      
-      console.error(`❌ Attempt ${attempt}/${config.maxRetries} failed for ${url}`);
-      console.error(`   Error Type: ${lastErrorCategory.type}`);
-      console.error(`   Retryable: ${lastErrorCategory.retryable}`);
-      console.error(`   Message: ${lastErrorCategory.message}`);
-      console.error(`   Original Error: ${error.message}`);
-      
-      // Don't retry if error is not retryable
-      if (!lastErrorCategory.retryable && attempt < config.maxRetries) {
-        console.log(`   ⚠️ Error is not retryable, skipping remaining attempts`);
-        break;
+  try {
+    for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
+      // Check if aborted
+      if (signal.aborted) {
+        throw new Error('Audit aborted due to timeout or cancellation');
       }
       
-      if (attempt < config.maxRetries) {
-        // Exponential backoff: 1s, 2s, 4s
-        const backoffDelay = 1000 * Math.pow(2, attempt - 1);
-        console.log(`   ⏳ Retrying ${url} in ${backoffDelay}ms...`);
-        await delay(backoffDelay);
-      } else {
-        // Mark as failed after all retries
-        await updatePageProgress(jobId, url, 'failed');
-        console.error(`   ❌ All retries exhausted for ${url}`);
+      console.log(`[auditSinglePageWithRetry] Attempt ${attempt}/${config.maxRetries} for ${url}`);
+      
+      try {
+        // Update progress to processing
+        console.log(`[auditSinglePageWithRetry] Updating progress to 'processing'...`);
+        await updatePageProgress(jobId, url, 'processing');
+        await updateStatus(jobId, 'auditing', url);
+        console.log(`[auditSinglePageWithRetry] ✅ Progress updated`);
+        
+        // Create timeout promise
+        const timeoutPromise = new Promise<AuditResult>((_, reject) => 
+          setTimeout(() => reject(new Error(`Timeout: Page took longer than ${config.timeoutPerPage}ms`)), config.timeoutPerPage)
+        );
+        
+        console.log(`[auditSinglePageWithRetry] Calling auditSinglePage...`);
+        const auditStartTime = Date.now();
+        
+        // Race between audit and timeout
+        const result = await Promise.race([
+          auditSinglePage(url, signal),
+          timeoutPromise
+        ]);
+        
+        if (abortTimeout) clearTimeout(abortTimeout);
+        
+        const auditDuration = Date.now() - auditStartTime;
+        console.log(`[auditSinglePageWithRetry] ✅ Audit completed in ${auditDuration}ms`);
+        
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        lastErrorCategory = categorizeError(error);
+        
+        console.error(`❌ Attempt ${attempt}/${config.maxRetries} failed for ${url}`);
+        console.error(`   Error Type: ${lastErrorCategory.type}`);
+        console.error(`   Retryable: ${lastErrorCategory.retryable}`);
+        console.error(`   Message: ${lastErrorCategory.message}`);
+        console.error(`   Original Error: ${error.message}`);
+        
+        // Don't retry if error is not retryable
+        if (!lastErrorCategory.retryable && attempt < config.maxRetries) {
+          console.log(`   ⚠️ Error is not retryable, skipping remaining attempts`);
+          break;
+        }
+        
+        if (attempt < config.maxRetries) {
+          // Exponential backoff: 1s, 2s, 4s
+          const backoffDelay = 1000 * Math.pow(2, attempt - 1);
+          console.log(`   ⏳ Retrying ${url} in ${backoffDelay}ms...`);
+          await delay(backoffDelay);
+        } else {
+          // Mark as failed after all retries
+          await updatePageProgress(jobId, url, 'failed');
+          console.error(`   ❌ All retries exhausted for ${url}`);
+        }
       }
     }
+  } finally {
+    if (abortTimeout) clearTimeout(abortTimeout);
   }
   
   // Throw error with categorized information
@@ -219,6 +245,18 @@ export async function processBatches(
   const failed: FailedPage[] = [];
   
   console.log(`[processBatches] 📦 Processing ${pages.length} pages in ${batches.length} batches (${config.batchSize} pages per batch)`);
+  
+  // CRITICAL: Verify we can actually start processing
+  console.log(`[processBatches] 🔍 Verifying batch processing can start...`);
+  try {
+    // Test that we can update status (verifies Redis connection)
+    await updateStatus(jobId, 'auditing', 'Verifying batch processing startup...');
+    console.log(`[processBatches] ✅ Status update verified - Redis connection OK`);
+  } catch (verifyError: any) {
+    console.error(`[processBatches] ❌ CRITICAL: Cannot update status - batch processing cannot proceed`);
+    console.error(`[processBatches] Error: ${verifyError.message}`);
+    throw new Error(`Batch processing startup failed: ${verifyError.message}`);
+  }
   
   // Update status to show we're starting
   try {
@@ -279,16 +317,41 @@ export async function processBatches(
         }, config.timeoutPerPage + 10000); // 10 seconds after timeout
         
         try {
+          // Special handling for first page of first batch
+          if (index === 0 && i === 0) {
+            console.log(`[processBatches] 🎯 CRITICAL: Processing FIRST page - adding extra monitoring`);
+            console.log(`[processBatches] 🎯 First page URL: ${pageUrl}`);
+            console.log(`[processBatches] 🎯 This page must complete or fail within ${config.timeoutPerPage}ms`);
+          }
+          
           // Update status to show which page we're processing
           await updateStatus(jobId, 'auditing', `Auditing page ${index + 1}/${batch.length}: ${pageUrl}`);
           
+          // Create AbortController for this page audit
+          const pageAbortController = new AbortController();
+          const abortSignal = pageAbortController.signal;
+          
           // Wrap auditSinglePageWithRetry in an additional timeout wrapper for extra safety
           const auditPromise = auditSinglePageWithRetry(pageUrl, jobId, config);
-          const pageTimeoutPromise = new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error(`Page audit timeout: ${pageUrl} took longer than ${config.timeoutPerPage}ms`)), config.timeoutPerPage)
-          );
           
-          const result = await Promise.race([auditPromise, pageTimeoutPromise]);
+          // Create timeout that aborts the audit if it takes too long
+          let timeoutId: NodeJS.Timeout;
+          const pageTimeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              console.error(`[processBatches] ⚠️ Page audit timeout - aborting: ${pageUrl}`);
+              pageAbortController.abort();
+              reject(new Error(`Page audit timeout: ${pageUrl} took longer than ${config.timeoutPerPage}ms`));
+            }, config.timeoutPerPage);
+          });
+          
+          // Clear timeout if audit completes
+          const result = await Promise.race([
+            auditPromise.then(r => {
+              clearTimeout(timeoutId);
+              return r;
+            }),
+            pageTimeoutPromise
+          ]);
           pageAuditCompleted = true;
           clearTimeout(watchdogTimer);
           
