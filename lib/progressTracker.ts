@@ -628,26 +628,32 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
   // Initialize KV lazily if not already done
   await initializeKv();
   
-  console.log(`🔍 Getting progress for jobId: ${jobId}`);
+  // Clean up jobId: remove any "progress:" prefix and trim whitespace
+  const cleanJobId = jobId.trim().replace(/^progress:/, '');
+  if (cleanJobId !== jobId) {
+    console.log(`⚠️ Cleaned jobId: "${jobId}" -> "${cleanJobId}"`);
+  }
+  
+  console.log(`🔍 Getting progress for jobId: ${cleanJobId}`);
   console.log(`🔍 Progress store size: ${progressStore.size}`);
   console.log(`🔍 All jobIds in store: ${Array.from(progressStore.keys()).join(', ')}`);
   
   // Try in-memory first
-  let progress = progressStore.get(jobId);
+  let progress = progressStore.get(cleanJobId);
   
   // If not found and KV is available, try KV
   if (!progress && useKv && kv) {
     try {
-      console.log(`🔍 Checking KV for jobId: ${jobId}`);
-      const kvKey = `audit:progress:${jobId}`;
+      console.log(`🔍 Checking KV for jobId: ${cleanJobId}`);
+      const kvKey = `audit:progress:${cleanJobId}`;
       console.log(`   KV key: ${kvKey}`);
       const kvData = await kv.get(kvKey) as string | null;
       if (kvData) {
-        console.log(`✅ Found progress in KV: ${jobId}`);
+        console.log(`✅ Found progress in KV: ${cleanJobId}`);
         console.log(`   KV data length: ${kvData.length} bytes`);
         const kvProgress = JSON.parse(kvData);
         // Also store in memory for faster subsequent access
-        progressStore.set(jobId, kvProgress);
+        progressStore.set(cleanJobId, kvProgress);
         progress = kvProgress;
       } else {
         console.log(`❌ No data found in KV for key: ${kvKey}`);
@@ -668,11 +674,11 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
   }
   
   if (!progress) {
-    console.log(`❌ Progress not found for jobId: ${jobId}`);
+    console.log(`❌ Progress not found for jobId: ${cleanJobId}`);
     console.log(`   Available jobIds: ${Array.from(progressStore.keys()).join(', ')}`);
-    console.log(`   JobId match check: ${Array.from(progressStore.keys()).map(k => `"${k}" === "${jobId}": ${k === jobId}`).join(', ')}`);
+    console.log(`   JobId match check: ${Array.from(progressStore.keys()).map(k => `"${k}" === "${cleanJobId}": ${k === cleanJobId}`).join(', ')}`);
   } else {
-    console.log(`✅ Found progress for jobId: ${jobId}, status: ${progress.status}`);
+    console.log(`✅ Found progress for jobId: ${cleanJobId}, status: ${progress.status}`);
   }
   return progress || null;
 }

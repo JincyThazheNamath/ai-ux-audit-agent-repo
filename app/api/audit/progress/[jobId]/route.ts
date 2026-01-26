@@ -35,6 +35,11 @@ export async function GET(
         jobId = parts[progressIndex + 1];
         // Remove query params if any
         jobId = jobId.split('?')[0];
+        // Remove any "progress:" prefix if accidentally included
+        if (jobId.startsWith('progress:')) {
+          jobId = jobId.replace(/^progress:/, '');
+          console.log('   ⚠️ Removed "progress:" prefix from jobId');
+        }
         console.log('   ✅ Extracted jobId from URL:', jobId);
       } else {
         // Regex fallback - match UUID pattern
@@ -61,6 +66,13 @@ export async function GET(
           paramsValue: params,
         }
       }, { status: 400 });
+    }
+
+    // Clean up jobId: remove any "progress:" prefix and trim whitespace
+    jobId = jobId.trim();
+    if (jobId.startsWith('progress:')) {
+      jobId = jobId.replace(/^progress:/, '');
+      console.log('   ⚠️ Removed "progress:" prefix from jobId');
     }
 
     console.log('🔍 Progress check for jobId:', jobId);
