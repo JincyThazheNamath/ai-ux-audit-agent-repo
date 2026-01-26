@@ -1,9 +1,7 @@
 [build]
-  # Base directory for the build (since app is in ux-audit-agent/)
-  base = "ux-audit-agent"
   # Build command for Next.js
   command = "npm run build"
-  # Publish directory (Next.js static export or .next for SSR)
+  # Publish directory (Next.js outputs to .next)
   publish = ".next"
 
 # Next.js configuration
@@ -12,14 +10,21 @@
   NPM_FLAGS = "--legacy-peer-deps"
   NEXT_TELEMETRY_DISABLED = "1"
 
-# Serverless functions configuration
+# Serverless functions configuration for Netlify
+# Note: Next.js API routes are automatically converted to Netlify Functions
 [functions]
-  # Function timeout (60 seconds for audit API)
+  # Function bundler
   node_bundler = "esbuild"
-  # Increase timeout for audit function
+  # Include all necessary files
   included_files = ["**/*"]
-  # Timeout for all functions (Netlify free tier max is 10s, Pro is 26s)
-  # Note: For 60s timeout, you may need Netlify Pro or use edge functions
+  # Note: Netlify free tier has 10s timeout, Pro has 26s
+  # For longer timeouts, consider Netlify Pro or breaking into smaller functions
+
+# Redirects for Next.js routing
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/next"
+  status = 200
 
 # Headers for security
 [[headers]]
@@ -31,3 +36,10 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
 
+# API route specific headers
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization"
