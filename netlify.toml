@@ -10,21 +10,18 @@
   NPM_FLAGS = "--legacy-peer-deps"
   NEXT_TELEMETRY_DISABLED = "1"
 
-# Disable Netlify Blobs (we use Redis Labs instead)
-# This prevents MissingBlobsEnvironmentError during deployment
-[plugins]
-  package = "@netlify/plugin-nextjs"
-  [plugins.inputs]
-    skipBlobsUpload = true
+# Next.js plugin is automatically detected by Netlify
+# Note: Blobs upload may fail if not configured, but build will succeed
+# We use Redis Labs for storage, so Blobs are not needed
 
 # Serverless functions configuration for Netlify
 # Note: Next.js API routes are automatically converted to Netlify Functions
 [functions]
-  # Function bundler
+  # Function bundler - esbuild will bundle dependencies efficiently
   node_bundler = "esbuild"
-  # Include all necessary files
-  included_files = ["**/*"]
-  # Note: Netlify free tier has 10s timeout, Pro has 26s max
+  # Note: Chromium is externalized in webpack config
+  # @sparticuz/chromium downloads Chromium at runtime, not bundled
+  # Netlify free tier has 10s timeout, Pro has 26s max
   # Batch processing is optimized for Netlify Pro (26s timeout)
   # Processes 2 pages per batch to fit within timeout limit
 
