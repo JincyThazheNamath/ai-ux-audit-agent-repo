@@ -24,10 +24,10 @@ export interface BatchConfig {
 
 const DEFAULT_CONFIG: BatchConfig = {
   batchSize: 3, // Reduced to avoid overwhelming browser/API
-  delayBetweenBatches: 2000, // 2 seconds between batches
-  delayBetweenRequests: 1000, // 1 second between requests
+  delayBetweenBatches: 12000, // 12 seconds between batches (was 2 seconds)
+  delayBetweenRequests: 11000, // 11 seconds between requests (was 1 second)
   maxRetries: 2, // Reduced retries to fail faster and move to next page
-  timeoutPerPage: 45000, // 45 seconds per page (reduced to fail faster and move to next page)
+  timeoutPerPage: 55000, // 55 seconds per page (was 45 seconds)
 };
 
 /**
@@ -147,7 +147,7 @@ async function auditSinglePageWithRetry(
     abortTimeout = setTimeout(() => {
       console.error(`[auditSinglePageWithRetry] ⚠️ Aborting audit for ${url} - exceeded timeout`);
       internalAbortController.abort();
-    }, config.timeoutPerPage + 5000); // 5 seconds buffer
+    }, config.timeoutPerPage + 15000); // 15 seconds buffer (was 5 seconds)
   }
 
   let lastError: Error | null = null;

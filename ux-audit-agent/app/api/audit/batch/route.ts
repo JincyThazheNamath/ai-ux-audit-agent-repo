@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
                         body: JSON.stringify({ jobId })
                     }),
                     new Promise<Response>((_, reject) => 
-                        setTimeout(() => reject(new Error('Recursive call timeout after 20s')), 20000)
+                        setTimeout(() => reject(new Error('Recursive call timeout after 30s')), 30000) // 30s (was 20s)
                     )
                 ]);
                 
