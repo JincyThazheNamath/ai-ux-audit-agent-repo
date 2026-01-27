@@ -295,28 +295,43 @@ async function initializeKv() {
     }
 
     // Enhanced production validation with better error handling
-    const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+    const isProduction = process.env.VERCEL === '1' || process.env.NETLIFY === 'true' || process.env.NODE_ENV === 'production';
+    const hasNeonUrl = !!process.env.NETLIFY_DATABASE_URL;
     const hasRedisUrl = !!process.env.REDIS_URL;
+    const hasStorage = hasNeonUrl || hasRedisUrl;
 
     if (isProduction) {
-      if (!hasRedisUrl) {
-        console.error('❌ CRITICAL: REDIS_URL is not configured in production!');
+      if (!hasStorage) {
+        console.error('❌ CRITICAL: No database storage configured in production!');
         console.error('   This will cause progress tracking to fail.');
-        console.error('   Please set REDIS_URL environment variable in Vercel Dashboard.');
-        console.error('   → Go to Vercel Dashboard → Settings → Environment Variables');
-        console.error('   → Add REDIS_URL with your Redis Labs connection string');
-        console.error('   Example: redis://default:password@host:port');
-        console.error('   Progress tracking will NOT persist across serverless invocations without Redis');
-        // Don't throw during initialization - let it fail gracefully when actually trying to use Redis
+        if (process.env.NETLIFY === 'true') {
+          console.error('   Please set NETLIFY_DATABASE_URL (link Neon database in Netlify Dashboard)');
+          console.error('   → Go to Netlify Dashboard → Data → Neon → Create/Link Database');
+        } else {
+          console.error('   Please set REDIS_URL or NETLIFY_DATABASE_URL environment variable');
+          console.error('   → Go to Dashboard → Settings → Environment Variables');
+          console.error('   → Add REDIS_URL with your Redis Labs connection string');
+          console.error('   Example: redis://default:password@host:port');
+        }
+        console.error('   Progress tracking will NOT persist across serverless invocations without storage');
+        // Don't throw during initialization - let it fail gracefully when actually trying to use storage
         // This prevents app crashes during build/startup
       } else {
-        console.log('✅ REDIS_URL is configured for production');
-        console.log(`   Connection timeout: ${CONFIG.redis.connectionTimeout / 1000} seconds`);
-        console.log(`   Retry attempts: ${CONFIG.redis.maxRetries} with exponential backoff`);
+        if (hasNeonUrl) {
+          console.log('✅ NETLIFY_DATABASE_URL is configured for production (Neon PostgreSQL)');
+        } else {
+          console.log('✅ REDIS_URL is configured for production');
+          console.log(`   Connection timeout: ${CONFIG.redis.connectionTimeout / 1000} seconds`);
+          console.log(`   Retry attempts: ${CONFIG.redis.maxRetries} with exponential backoff`);
+        }
       }
     } else {
-      console.log(`${hasRedisUrl ? '✅' : '⚠️'} REDIS_URL ${hasRedisUrl ? 'present' : 'missing'} in development`);
-      if (!hasRedisUrl) {
+      console.log(`${hasStorage ? '✅' : '⚠️'} Storage ${hasStorage ? 'configured' : 'not configured'} in development`);
+      if (hasNeonUrl) {
+        console.log('   Using Neon PostgreSQL (NETLIFY_DATABASE_URL)');
+      } else if (hasRedisUrl) {
+        console.log('   Using Redis (REDIS_URL)');
+      } else {
         console.log('   Progress tracking will use in-memory storage (may not persist in serverless)');
       }
     }
