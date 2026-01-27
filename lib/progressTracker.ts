@@ -46,10 +46,11 @@ const progressStore = globalForProgressStore.progressStore;
 // Check if we're in Vercel production environment
 const isVercelProduction = process.env.VERCEL === '1' && process.env.NODE_ENV === 'production';
 
-// Redis client (uses REDIS_URL for Redis Labs connection)
+// Database client (uses Neon PostgreSQL via NETLIFY_DATABASE_URL, or Redis via REDIS_URL)
 let kv: any = null;
 let useKv = false;
 let kvInitialized = false;
+let useNeon = false;
 
 // Lazy initialization function - only called when needed
 async function initializeKv() {
@@ -79,7 +80,54 @@ async function initializeKv() {
   }
 
   try {
-    // First, try Redis Labs connection string (REDIS_URL) - preferred for user's setup
+    // First, try Neon PostgreSQL (NETLIFY_DATABASE_URL) - preferred for Netlify
+    if (process.env.NETLIFY_DATABASE_URL) {
+      console.log('🔍 Attempting to initialize Neon PostgreSQL connection...');
+      console.log('   NETLIFY_DATABASE_URL present:', !!process.env.NETLIFY_DATABASE_URL);
+      
+      try {
+        const { dbGet, dbSet, dbDel, dbKeys, dbSavePageResult, dbGetPageResult, dbGetAllPageResults } = await import('./neonAdapter');
+        
+        // Create compatible interface for Neon
+        kv = {
+          async get(key: string) {
+            return await dbGet(key);
+          },
+          async set(key: string, value: string, options?: { ex?: number }) {
+            return await dbSet(key, value, options);
+          },
+          async del(key: string) {
+            return await dbDel(key);
+          },
+          async keys(pattern: string) {
+            return await dbKeys(pattern);
+          },
+          // Neon-specific methods
+          async savePageResult(jobId: string, url: string, result: any) {
+            return await dbSavePageResult(jobId, url, result);
+          },
+          async getPageResult(jobId: string, url: string) {
+            return await dbGetPageResult(jobId, url);
+          },
+          async getAllPageResults(jobId: string) {
+            return await dbGetAllPageResults(jobId);
+          }
+        };
+        
+        useKv = true;
+        useNeon = true;
+        kvInitialized = true;
+        console.log('✅ Neon PostgreSQL connection initialized');
+        console.log('   Using NETLIFY_DATABASE_URL for persistent storage');
+        return;
+      } catch (neonError: any) {
+        console.error('❌ Failed to initialize Neon:', neonError.message);
+        console.error('   Will try Redis fallback if available');
+        // Continue to Redis fallback
+      }
+    }
+    
+    // Fallback to Redis Labs connection string (REDIS_URL)
     if (process.env.REDIS_URL) {
       console.log('🔍 Attempting to initialize Redis Labs connection...');
       console.log('   REDIS_URL present:', !!process.env.REDIS_URL);
@@ -886,10 +934,24 @@ export async function cleanupOldRedisData(): Promise<void> {
   await initializeKv();
   
   if (!useKv || !kv) {
-    console.log('[cleanupOldRedisData] Redis not available, skipping cleanup');
+    console.log(`[cleanupOldRedisData] ${useNeon ? 'Neon' : 'Redis'} not available, skipping cleanup`);
     return;
   }
+  
+  // Use Neon cleanup if available (more efficient)
+  if (useNeon) {
+    try {
+      const { dbCleanup } = await import('./neonAdapter');
+      const deleted = await dbCleanup();
+      console.log(`[cleanupOldRedisData] ✅ Cleaned up ${deleted} expired records from Neon`);
+      return;
+    } catch (error: any) {
+      console.error(`[cleanupOldRedisData] ❌ Neon cleanup error:`, error.message);
+      return;
+    }
+  }
 
+  // Redis cleanup pattern
   try {
     const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000;
     const allProgressKeys = await kv.keys('audit:progress:*') as string[];
@@ -941,12 +1003,7 @@ export async function savePageResult(jobId: string, url: string, result: any): P
 
   if (useKv && kv) {
     try {
-      // Create a unique key for this page result
-      // Use hashing or encoding for URL to ensure valid key
-      const safeUrl = Buffer.from(url).toString('base64');
-      const kvKey = `audit:result:${jobId}:${safeUrl}`;
-      
-      // OPTIMIZATION: Remove screenshot to save Redis memory (screenshots can be 100KB-2MB+)
+      // OPTIMIZATION: Remove screenshot to save storage (screenshots can be 100KB-2MB+)
       // Screenshots are only needed for display, not for aggregation
       const resultWithoutScreenshot = { ...result };
       const screenshotSize = resultWithoutScreenshot.screenshot ? resultWithoutScreenshot.screenshot.length : 0;
@@ -955,23 +1012,31 @@ export async function savePageResult(jobId: string, url: string, result: any): P
       const resultJson = JSON.stringify(resultWithoutScreenshot);
       const sizeKB = Math.round(resultJson.length / 1024);
       
-      // Reduced expiration to 1 hour (from 2 hours) to free up memory faster
-      await kv.set(kvKey, resultJson, { ex: 3600 }); // Keep for 1 hour
+      // Use Neon-specific method if available, otherwise fall back to Redis pattern
+      if (useNeon && kv.savePageResult) {
+        await kv.savePageResult(jobId, url, resultWithoutScreenshot);
+      } else {
+        // Redis pattern: Create a unique key for this page result
+        const safeUrl = Buffer.from(url).toString('base64');
+        const kvKey = `audit:result:${jobId}:${safeUrl}`;
+        // Reduced expiration to 1 hour (from 2 hours) to free up memory faster
+        await kv.set(kvKey, resultJson, { ex: 3600 }); // Keep for 1 hour
+      }
       
       if (screenshotSize > 0) {
         const screenshotSizeKB = Math.round(screenshotSize / 1024);
-        console.log(`✅ Saved page result to KV: ${jobId} / ${url} (${sizeKB}KB, excluded ${screenshotSizeKB}KB screenshot)`);
+        console.log(`✅ Saved page result to ${useNeon ? 'Neon' : 'KV'}: ${jobId} / ${url} (${sizeKB}KB, excluded ${screenshotSizeKB}KB screenshot)`);
       } else {
-        console.log(`✅ Saved page result to KV: ${jobId} / ${url} (${sizeKB}KB)`);
+        console.log(`✅ Saved page result to ${useNeon ? 'Neon' : 'KV'}: ${jobId} / ${url} (${sizeKB}KB)`);
       }
     } catch (e: any) {
       // Handle Redis OOM (Out of Memory) errors specifically
-      if (e.message && e.message.includes('OOM') || e.message.includes('maxmemory')) {
+      if (e.message && (e.message.includes('OOM') || e.message.includes('maxmemory'))) {
         console.error(`❌ Redis OOM: Failed to save page result to KV (Redis out of memory)`);
         console.error(`   Consider: 1) Upgrading Redis plan, 2) Cleaning old data, 3) Reducing data size`);
         console.error(`   Job will continue but results may not persist across invocations`);
       } else {
-        console.error(`❌ Failed to save page result to KV: ${e.message}`);
+        console.error(`❌ Failed to save page result to ${useNeon ? 'Neon' : 'KV'}: ${e.message}`);
       }
     }
   } else {
@@ -994,15 +1059,21 @@ export async function getPageResult(jobId: string, url: string): Promise<any | n
 
   if (useKv && kv) {
     try {
-      const safeUrl = Buffer.from(url).toString('base64');
-      const kvKey = `audit:result:${jobId}:${safeUrl}`;
-      const data = await kv.get(kvKey) as string | null;
+      // Use Neon-specific method if available, otherwise fall back to Redis pattern
+      if (useNeon && kv.getPageResult) {
+        return await kv.getPageResult(jobId, url);
+      } else {
+        // Redis pattern
+        const safeUrl = Buffer.from(url).toString('base64');
+        const kvKey = `audit:result:${jobId}:${safeUrl}`;
+        const data = await kv.get(kvKey) as string | null;
 
-      if (data) {
-        return JSON.parse(data);
+        if (data) {
+          return JSON.parse(data);
+        }
       }
     } catch (e: any) {
-      console.error(`❌ Failed to get page result from KV: ${e.message}`);
+      console.error(`❌ Failed to get page result from ${useNeon ? 'Neon' : 'KV'}: ${e.message}`);
     }
   } else {
     // Check in-memory fallback
@@ -1019,9 +1090,21 @@ export async function getPageResult(jobId: string, url: string): Promise<any | n
  */
 export async function getAllPageResults(jobId: string): Promise<any[]> {
   await initializeKv();
+  
+  // Use Neon-specific method if available for better performance
+  if (useKv && kv && useNeon && kv.getAllPageResults) {
+    try {
+      const results = await kv.getAllPageResults(jobId);
+      console.log(`✅ Retrieved ${results.length} page results from Neon`);
+      return results;
+    } catch (e: any) {
+      console.error(`❌ Failed to get all page results from Neon: ${e.message}`);
+      // Fall through to Redis pattern
+    }
+  }
+  
+  // Redis pattern: Fetch individually
   const results: any[] = [];
-
-  // Need to know which URLs to look for
   const progress = await getProgress(jobId);
   if (!progress) return [];
 
