@@ -137,50 +137,41 @@ export async function POST(request: NextRequest) {
             console.log(`[Batch] 🔄 triggering next batch (${remainingPendingPages.length} pages remaining)...`);
 
             // Construct the URL for the recursive call
-            const protocol = request.headers.get('x-forwarded-proto') || 'https';
-            const host = request.headers.get('host');
-            const nextBatchUrl = `${protocol}://${host}/api/audit/batch`;
+            // Use same approach as site route for reliability
+            const origin = new URL(request.url).origin;
+            const nextBatchUrl = `${origin}/api/audit/batch`;
 
             console.log(`[Batch] 🔗 Next batch URL: ${nextBatchUrl}`);
 
-            // Use Vercel's waitUntil to ensure the recursive call completes
-            // This is critical for serverless functions to keep running after response
-            const triggerNextBatch = async () => {
-                try {
-                    console.log(`[Batch] 📞 Making recursive batch call...`);
-                    const response = await fetch(nextBatchUrl, {
+            // CRITICAL FIX: Directly await the recursive call to ensure it executes
+            // Since we process small batches (4 pages), this won't timeout
+            // This is more reliable than waitUntil which may not execute
+            try {
+                console.log(`[Batch] 📞 Making recursive batch call...`);
+                
+                // Use Promise.race with timeout to prevent hanging
+                const response = await Promise.race([
+                    fetch(nextBatchUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ jobId })
-                    });
-                    
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        console.error(`[Batch] ❌ Recursive batch call failed: ${response.status} - ${errorText}`);
-                    } else {
-                        const result = await response.json();
-                        console.log(`[Batch] ✅ Recursive batch call succeeded:`, result);
-                    }
-                } catch (e: any) {
-                    console.error(`[Batch] ❌ Error in recursive batch call:`, e.message);
-                }
-            };
-
-            // Try to use Vercel's waitUntil if available
-            try {
-                const vercelFunctions = await import('@vercel/functions');
-                if (vercelFunctions.waitUntil) {
-                    vercelFunctions.waitUntil(triggerNextBatch());
-                    console.log(`[Batch] ✅ Registered recursive call with waitUntil`);
+                    }),
+                    new Promise<Response>((_, reject) => 
+                        setTimeout(() => reject(new Error('Recursive call timeout after 20s')), 20000)
+                    )
+                ]);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error(`[Batch] ❌ Recursive batch call failed: ${response.status} - ${errorText}`);
                 } else {
-                    // Fallback: await the call (but this may timeout)
-                    console.log(`[Batch] ⚠️ waitUntil not available, awaiting recursive call...`);
-                    await triggerNextBatch();
+                    const result = await response.json();
+                    console.log(`[Batch] ✅ Recursive batch call succeeded:`, result);
                 }
-            } catch (waitError) {
-                // If @vercel/functions is not available, await the call
-                console.log(`[Batch] ⚠️ Could not import waitUntil, awaiting recursive call...`);
-                await triggerNextBatch();
+            } catch (e: any) {
+                console.error(`[Batch] ❌ Error in recursive batch call:`, e.message);
+                console.error(`[Batch] ⚠️ Will retry on next progress check or manual trigger`);
+                // Don't throw - allow function to return so progress can be checked
             }
         } else {
             // No more pages, we are done - trigger aggregation
@@ -244,7 +235,8 @@ export async function POST(request: NextRequest) {
             processed: currentBatchUrls.length,
             remaining: remainingPendingPages.length,
             totalPages: updatedProgress.totalPages,
-            completedPages: updatedProgress.completedPages
+            completedPages: updatedProgress.completedPages,
+            nextBatchTriggered: remainingPendingPages.length > 0
         });
 
     } catch (error: any) {
