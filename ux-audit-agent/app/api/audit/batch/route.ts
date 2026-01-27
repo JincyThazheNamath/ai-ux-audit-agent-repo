@@ -74,50 +74,119 @@ export async function POST(request: NextRequest) {
             // Continue to recursive step to ensure we don't get stuck
         }
 
-        // 5. Recursive Call
-        // Check if there are MORE pages after this batch
-        const remainingPagesCount = pendingPages.length - currentBatchUrls.length;
+        // 5. Re-check progress after processing to get accurate pending count
+        const updatedProgress = await getProgress(jobId);
+        if (!updatedProgress) {
+            console.error(`[Batch] ❌ Could not get updated progress after batch processing`);
+            return NextResponse.json({ error: 'Failed to get updated progress' }, { status: 500 });
+        }
 
-        if (remainingPagesCount > 0) {
-            console.log(`[Batch] 🔄 triggering next batch (${remainingPagesCount} pages remaining)...`);
+        const remainingPendingPages = updatedProgress.pageResults
+            .filter(p => p.status === 'pending')
+            .map(p => p.url);
+
+        // 6. Recursive Call or Finalization
+        if (remainingPendingPages.length > 0) {
+            console.log(`[Batch] 🔄 triggering next batch (${remainingPendingPages.length} pages remaining)...`);
 
             // Construct the URL for the recursive call
-            // Vercel environment variables needed for absolute URL?
-            // Usually relative URL works with internal fetch if configured, 
-            // but robustly we should use the request URL origin.
             const protocol = request.headers.get('x-forwarded-proto') || 'https';
             const host = request.headers.get('host');
             const nextBatchUrl = `${protocol}://${host}/api/audit/batch`;
 
             console.log(`[Batch] 🔗 Next batch URL: ${nextBatchUrl}`);
 
-            // Use waitUntil if available (Vercel) to fire-and-forget
-            // Or just fetch and wait (since we have 5 min timeout, we can wait a bit)
+            // Use Vercel's waitUntil to ensure the recursive call completes
+            // This is critical for serverless functions to keep running after response
+            const triggerNextBatch = async () => {
+                try {
+                    console.log(`[Batch] 📞 Making recursive batch call...`);
+                    const response = await fetch(nextBatchUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ jobId })
+                    });
+                    
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        console.error(`[Batch] ❌ Recursive batch call failed: ${response.status} - ${errorText}`);
+                    } else {
+                        const result = await response.json();
+                        console.log(`[Batch] ✅ Recursive batch call succeeded:`, result);
+                    }
+                } catch (e: any) {
+                    console.error(`[Batch] ❌ Error in recursive batch call:`, e.message);
+                }
+            };
 
-            // Better: trigger async and return response
+            // Try to use Vercel's waitUntil if available
             try {
-                // We use a separate fetch to decouple the stack
-                fetch(nextBatchUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jobId })
-                }).catch(e => console.error(`[Batch] ❌ Failed to trigger next batch: ${e.message}`));
-
-            } catch (e) {
-                console.error(`[Batch] ❌ Error initiating next batch:`, e);
+                const vercelFunctions = await import('@vercel/functions');
+                if (vercelFunctions.waitUntil) {
+                    vercelFunctions.waitUntil(triggerNextBatch());
+                    console.log(`[Batch] ✅ Registered recursive call with waitUntil`);
+                } else {
+                    // Fallback: await the call (but this may timeout)
+                    console.log(`[Batch] ⚠️ waitUntil not available, awaiting recursive call...`);
+                    await triggerNextBatch();
+                }
+            } catch (waitError) {
+                // If @vercel/functions is not available, await the call
+                console.log(`[Batch] ⚠️ Could not import waitUntil, awaiting recursive call...`);
+                await triggerNextBatch();
             }
         } else {
-            // No more pages, we are done
-            console.log(`[Batch] ✅ Final batch completed.`);
-            await updateStatus(jobId, 'aggregating');
-            // We could trigger aggregation here
-            await updateStatus(jobId, 'completed');
+            // No more pages, we are done - trigger aggregation
+            console.log(`[Batch] ✅ All pages completed. Starting aggregation...`);
+            
+            try {
+                await updateStatus(jobId, 'aggregating');
+                
+                // Get all page results for aggregation
+                const { getAllPageResults } = await import('../../../../../lib/progressTracker');
+                const allResults = await getAllPageResults(jobId);
+
+                if (allResults.length > 0) {
+                    console.log(`[Batch] 📊 Aggregating ${allResults.length} page results...`);
+                    const aggregated = aggregateAuditResults(allResults, allResults[0].url);
+                    const sortedPages = sortPagesBySeverity(allResults);
+
+                    // Get failed pages
+                    const finalProgress = await getProgress(jobId);
+                    const failedPages = finalProgress ? finalProgress.pageResults.filter(p => p.status === 'failed') : [];
+
+                    await saveFinalResult(jobId, {
+                        aggregated,
+                        sortedPages,
+                        pageResults: allResults,
+                        failedPages: failedPages.map(p => ({
+                            url: p.url,
+                            error: 'Audit failed',
+                            errorType: 'unknown',
+                            retryable: true
+                        })),
+                        isMockData: false
+                    });
+                    console.log(`[Batch] ✅ Final aggregation completed and saved.`);
+                } else {
+                    console.warn(`[Batch] ⚠️ No results found to aggregate.`);
+                }
+
+                await updateStatus(jobId, 'completed');
+                console.log(`[Batch] ✅ Job marked as completed.`);
+            } catch (aggError: any) {
+                console.error(`[Batch] ❌ Aggregation error:`, aggError);
+                // Still mark as completed even if aggregation fails
+                await updateStatus(jobId, 'completed');
+            }
         }
 
         return NextResponse.json({
             status: 'processing',
             processed: currentBatchUrls.length,
-            remaining: remainingPagesCount
+            remaining: remainingPendingPages.length,
+            totalPages: updatedProgress.totalPages,
+            completedPages: updatedProgress.completedPages
         });
 
     } catch (error: any) {
