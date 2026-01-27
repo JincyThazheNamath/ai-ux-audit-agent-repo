@@ -259,14 +259,26 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
           });
           console.log(`  ✅ Page loaded successfully (load event fallback)`);
         } catch (loadError: any) {
-          // Last resort: just navigate without waiting
-          console.log(`  ⚠️ load event timeout, navigating without wait...`);
-          await page.goto(targetUrl.toString(), {
-            waitUntil: 'commit', // Just wait for navigation to start
-            timeout: 10000 // 10 seconds max
-          });
-          await page.waitForTimeout(2000); // Wait 2 seconds for basic content
-          console.log(`  ✅ Page navigation completed (minimal wait)`);
+          // Last resort: use domcontentloaded with shorter timeout
+          console.log(`  ⚠️ load event timeout, trying domcontentloaded with minimal wait...`);
+          try {
+            await page.goto(targetUrl.toString(), {
+              waitUntil: 'domcontentloaded', // Fastest valid option
+              timeout: 10000 // 10 seconds max
+            });
+            await page.waitForTimeout(2000); // Wait 2 seconds for basic content
+            console.log(`  ✅ Page navigation completed (minimal wait)`);
+          } catch (finalError: any) {
+            // If even domcontentloaded fails, try without waitUntil (just navigate)
+            console.log(`  ⚠️ All wait strategies failed, attempting basic navigation...`);
+            await page.goto(targetUrl.toString(), {
+              timeout: 5000 // Very short timeout
+            }).catch(() => {
+              // Ignore errors - page may still be partially loaded
+            });
+            await page.waitForTimeout(3000); // Wait 3 seconds for any content
+            console.log(`  ✅ Page navigation attempted (best effort)`);
+          }
         }
       }
     } catch (error: any) {
