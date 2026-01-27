@@ -10,6 +10,13 @@
   NPM_FLAGS = "--legacy-peer-deps"
   NEXT_TELEMETRY_DISABLED = "1"
 
+# Disable Netlify Blobs (we use Redis Labs instead)
+# This prevents MissingBlobsEnvironmentError during deployment
+[plugins]
+  package = "@netlify/plugin-nextjs"
+  [plugins.inputs]
+    skipBlobsUpload = true
+
 # Serverless functions configuration for Netlify
 # Note: Next.js API routes are automatically converted to Netlify Functions
 [functions]
