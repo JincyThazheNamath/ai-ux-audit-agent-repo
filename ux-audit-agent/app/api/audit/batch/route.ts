@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProgress, updateStatus, updatePageProgress, saveFinalResult } from '../../../../lib/progressTracker';
-import { processBatches } from '../../../../lib/batchProcessor';
-import { aggregateAuditResults, sortPagesBySeverity } from '../../../../lib/batchAuditor';
+import { getProgress, updateStatus, updatePageProgress, saveFinalResult } from '../../../../../lib/progressTracker';
+import { processBatches } from '../../../../../lib/batchProcessor';
+import { aggregateAuditResults, sortPagesBySeverity } from '../../../../../lib/batchAuditor';
 
 // Vercel serverless function configuration
 export const maxDuration = 300; // 5 minutes max
