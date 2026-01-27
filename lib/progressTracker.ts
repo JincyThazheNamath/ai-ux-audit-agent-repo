@@ -673,18 +673,86 @@ export async function saveFinalResult(jobId: string, finalResult: any): Promise<
     return;
   }
 
+  // CRITICAL OPTIMIZATION: Strip screenshots and reduce data size to prevent Redis OOM
+  const optimizedFinalResult = {
+    aggregated: finalResult.aggregated ? {
+      ...finalResult.aggregated,
+      // Remove screenshots and limit findings from aggregated pageResults
+      pageResults: finalResult.aggregated.pageResults?.map((page: any) => {
+        const { screenshot, html, ...pageWithoutLargeData } = page;
+        return {
+          ...pageWithoutLargeData,
+          findings: page.findings?.slice(0, 20) || [] // Limit to 20 findings per page
+        };
+      }) || []
+    } : finalResult.aggregated,
+    
+    sortedPages: finalResult.sortedPages?.map((page: any) => {
+      // Remove full result object, keep only summary
+      const { result, ...pageSummary } = page;
+      if (result) {
+        const { screenshot, html, ...resultWithoutLargeData } = result;
+        return {
+          ...pageSummary,
+          result: {
+            ...resultWithoutLargeData,
+            findings: result.findings?.slice(0, 10) || [] // Limit findings
+          }
+        };
+      }
+      return pageSummary;
+    }) || [],
+    
+    // Limit pageResults size - remove screenshots and limit findings
+    pageResults: finalResult.pageResults?.map((page: any) => {
+      const { screenshot, html, ...pageWithoutLargeData } = page;
+      return {
+        ...pageWithoutLargeData,
+        findings: page.findings?.slice(0, 10) || [] // Limit to 10 findings
+      };
+    }) || [],
+    
+    failedPages: finalResult.failedPages || []
+  };
+
+  // Calculate size before saving
+  const resultJson = JSON.stringify(optimizedFinalResult);
+  const sizeKB = Math.round(resultJson.length / 1024);
+  console.log(`💾 Saving optimized finalResult (${sizeKB}KB) for jobId: ${jobId}`);
+
   // Set finalResult
-  (progress as any).finalResult = finalResult;
+  (progress as any).finalResult = optimizedFinalResult;
   progress.status = 'completed';
 
-  // Save to memory
+  // Save to memory first
   progressStore.set(jobId, progress);
 
-  // Save to KV
-  await saveProgressToKv(jobId, progress);
-
-  console.log(`✅ Saved finalResult for jobId: ${jobId}`);
-  console.log(`   finalResult keys:`, Object.keys(finalResult || {}));
+  // Save to KV with OOM handling
+  try {
+    await saveProgressToKv(jobId, progress);
+    console.log(`✅ Final result saved successfully (${sizeKB}KB)`);
+  } catch (kvError: any) {
+    // Handle Redis OOM specifically
+    if (kvError.message && (kvError.message.includes('OOM') || kvError.message.includes('maxmemory'))) {
+      console.error(`❌ Redis OOM: Cannot save finalResult (${sizeKB}KB)`);
+      console.error(`   Attempting cleanup before retry...`);
+      
+      // Try cleanup and retry once
+      try {
+        await cleanupOldRedisData();
+        await saveProgressToKv(jobId, progress);
+        console.log(`✅ Final result saved after cleanup`);
+      } catch (retryError: any) {
+        console.error(`❌ Still OOM after cleanup. Job marked as completed in memory only.`);
+        console.error(`   Please clear Redis manually or upgrade plan`);
+        // Still mark as completed so UI doesn't hang
+        progress.status = 'completed';
+        progressStore.set(jobId, progress);
+      }
+    } else {
+      throw kvError;
+    }
+  }
 }
 
 /**

@@ -48,6 +48,16 @@ export async function POST(request: NextRequest) {
             try {
                 await updateStatus(jobId, 'aggregating');
                 
+                // Clean up old Redis data before saving final result to prevent OOM
+                const { cleanupOldRedisData } = await import('../../../../../lib/progressTracker');
+                console.log(`[Batch] 🧹 Cleaning up old Redis data before saving final result...`);
+                try {
+                    await cleanupOldRedisData();
+                } catch (cleanupError: any) {
+                    console.warn(`[Batch] ⚠️ Cleanup warning:`, cleanupError.message);
+                    // Continue even if cleanup fails
+                }
+                
                 // Get all page results for aggregation
                 const { getAllPageResults } = await import('../../../../../lib/progressTracker');
                 const allResults = await getAllPageResults(jobId);
@@ -91,16 +101,24 @@ export async function POST(request: NextRequest) {
                 await updateStatus(jobId, 'completed');
                 console.log(`[Batch] ✅ Job marked as completed.`);
             } catch (aggError: any) {
-                console.error(`[Batch] ❌ Aggregation error:`, aggError);
-                // Still mark as completed even if aggregation fails
-                await updateStatus(jobId, 'completed');
+                // Handle OOM errors specifically
+                if (aggError.message && aggError.message.includes('OOM')) {
+                    console.error(`[Batch] ❌ Redis OOM during aggregation`);
+                    // Mark as completed anyway so UI doesn't hang
+                    await updateStatus(jobId, 'completed');
+                } else {
+                    console.error(`[Batch] ❌ Aggregation error:`, aggError);
+                    // Still mark as completed even if aggregation fails
+                    await updateStatus(jobId, 'completed');
+                }
             }
 
             return NextResponse.json({ status: 'completed', message: 'All pages processed' });
         }
 
         // 3. Define Batch Size
-        const BATCH_SIZE = 4; // Small chunk to ensure it fits in timeout
+        // Netlify Pro has 26s timeout, so process 2 pages at a time to fit within timeout
+        const BATCH_SIZE = 2; // Reduced for Netlify's 26s timeout limit
         const currentBatchUrls = pendingPages.slice(0, BATCH_SIZE);
 
         console.log(`[Batch] 📦 Processing ${currentBatchUrls.length} pages: ${currentBatchUrls.join(', ')}`);
@@ -180,6 +198,16 @@ export async function POST(request: NextRequest) {
             try {
                 await updateStatus(jobId, 'aggregating');
                 
+                // Clean up old Redis data before saving final result to prevent OOM
+                const { cleanupOldRedisData } = await import('../../../../../lib/progressTracker');
+                console.log(`[Batch] 🧹 Cleaning up old Redis data before saving final result...`);
+                try {
+                    await cleanupOldRedisData();
+                } catch (cleanupError: any) {
+                    console.warn(`[Batch] ⚠️ Cleanup warning:`, cleanupError.message);
+                    // Continue even if cleanup fails
+                }
+                
                 // Get all page results for aggregation
                 const { getAllPageResults } = await import('../../../../../lib/progressTracker');
                 const allResults = await getAllPageResults(jobId);
@@ -224,9 +252,16 @@ export async function POST(request: NextRequest) {
                 await updateStatus(jobId, 'completed');
                 console.log(`[Batch] ✅ Job marked as completed.`);
             } catch (aggError: any) {
-                console.error(`[Batch] ❌ Aggregation error:`, aggError);
-                // Still mark as completed even if aggregation fails
-                await updateStatus(jobId, 'completed');
+                // Handle OOM errors specifically
+                if (aggError.message && aggError.message.includes('OOM')) {
+                    console.error(`[Batch] ❌ Redis OOM during aggregation`);
+                    // Mark as completed anyway so UI doesn't hang
+                    await updateStatus(jobId, 'completed');
+                } else {
+                    console.error(`[Batch] ❌ Aggregation error:`, aggError);
+                    // Still mark as completed even if aggregation fails
+                    await updateStatus(jobId, 'completed');
+                }
             }
         }
 

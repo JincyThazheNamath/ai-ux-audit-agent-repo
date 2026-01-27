@@ -17,8 +17,20 @@
   node_bundler = "esbuild"
   # Include all necessary files
   included_files = ["**/*"]
-  # Note: Netlify free tier has 10s timeout, Pro has 26s
-  # For longer timeouts, consider Netlify Pro or breaking into smaller functions
+  # Note: Netlify free tier has 10s timeout, Pro has 26s max
+  # Batch processing is optimized for Netlify Pro (26s timeout)
+  # Processes 2 pages per batch to fit within timeout limit
+
+# Function-specific timeout configuration (requires Netlify Pro)
+# Free tier: 10s max, Pro tier: 26s max
+[functions."app/api/audit/batch/route.ts"]
+  timeout = 26  # Max timeout on Pro plan
+
+[functions."app/api/audit/site/route.ts"]
+  timeout = 26  # Max timeout on Pro plan
+
+[functions."app/api/audit/route.ts"]
+  timeout = 26  # Max timeout on Pro plan
 
 # Redirects for Next.js routing
 [[redirects]]
