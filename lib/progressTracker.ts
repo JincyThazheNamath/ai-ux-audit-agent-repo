@@ -344,7 +344,8 @@ export async function createProgressTracker(jobId: string, totalPages: number): 
       console.log(`   KV key: ${kvKey}`);
       console.log(`   Data size: ${progressJson.length} bytes`);
 
-      await kv.set(kvKey, progressJson, { ex: 3600 }); // Expire after 1 hour
+      // Reduced expiration to 30 minutes (from 1 hour) to free up memory faster
+      await kv.set(kvKey, progressJson, { ex: 1800 }); // Expire after 30 minutes
       console.log(`✅ Stored progress in KV: ${jobId}`);
 
       // Verify it was saved by reading it back
@@ -528,9 +529,29 @@ async function saveProgressToKv(jobId: string, progress: AuditProgress): Promise
   if (useKv && kv) {
     try {
       const kvKey = `audit:progress:${jobId}`;
-      const progressJson = JSON.stringify(progress);
-      await kv.set(kvKey, progressJson, { ex: 3600 });
-      console.log(`📝 Saved progress to KV: ${jobId} (status: ${progress.status}, size: ${progressJson.length} bytes)`);
+      
+      // OPTIMIZATION: Remove finalResult from progress if it contains screenshots
+      // Store finalResult separately or exclude screenshots to save memory
+      const progressToStore = { ...progress };
+      const finalResult = (progressToStore as any).finalResult;
+      if (finalResult && finalResult.pageResults) {
+        // Remove screenshots from finalResult pageResults to save memory
+        const optimizedFinalResult = {
+          ...finalResult,
+          pageResults: finalResult.pageResults.map((page: any) => {
+            const { screenshot, ...pageWithoutScreenshot } = page;
+            return pageWithoutScreenshot;
+          })
+        };
+        (progressToStore as any).finalResult = optimizedFinalResult;
+      }
+      
+      const progressJson = JSON.stringify(progressToStore);
+      const sizeKB = Math.round(progressJson.length / 1024);
+      
+      // Reduced expiration to 30 minutes for progress (from 1 hour) to free up memory faster
+      await kv.set(kvKey, progressJson, { ex: 1800 });
+      console.log(`📝 Saved progress to KV: ${jobId} (status: ${progress.status}, size: ${sizeKB}KB)`);
 
       // Verify it was saved
       try {
@@ -544,8 +565,15 @@ async function saveProgressToKv(jobId: string, progress: AuditProgress): Promise
         console.warn(`⚠️ Failed to verify KV save:`, verifyError.message);
       }
     } catch (kvError: any) {
-      console.error('⚠️ Failed to save progress to KV:', kvError.message);
-      console.error('   Progress saved in memory only - may not persist across serverless invocations');
+      // Handle Redis OOM (Out of Memory) errors specifically
+      if (kvError.message && (kvError.message.includes('OOM') || kvError.message.includes('maxmemory'))) {
+        console.error('❌ Redis OOM: Failed to save progress to KV (Redis out of memory)');
+        console.error('   Consider: 1) Upgrading Redis plan, 2) Cleaning old data, 3) Reducing data size');
+        console.error('   Progress saved in memory only - may not persist across serverless invocations');
+      } else {
+        console.error('⚠️ Failed to save progress to KV:', kvError.message);
+        console.error('   Progress saved in memory only - may not persist across serverless invocations');
+      }
     }
   }
 }
@@ -782,11 +810,63 @@ export function cleanupOldProgress(): void {
   }
 }
 
+/**
+ * Cleans up old Redis data to free memory
+ * Removes completed jobs older than 30 minutes and their associated results
+ */
+export async function cleanupOldRedisData(): Promise<void> {
+  await initializeKv();
+  
+  if (!useKv || !kv) {
+    console.log('[cleanupOldRedisData] Redis not available, skipping cleanup');
+    return;
+  }
+
+  try {
+    const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000;
+    const allProgressKeys = await kv.keys('audit:progress:*') as string[];
+    let cleanedCount = 0;
+
+    for (const key of allProgressKeys) {
+      try {
+        const data = await kv.get(key) as string | null;
+        if (data) {
+          const progress = JSON.parse(data) as AuditProgress;
+          // Clean up completed jobs older than 30 minutes
+          if (progress.status === 'completed' && progress.startTime < thirtyMinutesAgo) {
+            await kv.del(key);
+            cleanedCount++;
+
+            // Also clean up associated page results
+            const jobId = key.replace('audit:progress:', '');
+            const resultKeys = await kv.keys(`audit:result:${jobId}:*`) as string[];
+            for (const resultKey of resultKeys) {
+              await kv.del(resultKey);
+            }
+            console.log(`[cleanupOldRedisData] Cleaned up job: ${jobId} (${resultKeys.length} results)`);
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[cleanupOldRedisData] Failed to process key ${key}:`, e.message);
+      }
+    }
+
+    if (cleanedCount > 0) {
+      console.log(`[cleanupOldRedisData] ✅ Cleaned up ${cleanedCount} old jobs from Redis`);
+    } else {
+      console.log(`[cleanupOldRedisData] No old jobs to clean up`);
+    }
+  } catch (error: any) {
+    console.error(`[cleanupOldRedisData] ❌ Cleanup error:`, error.message);
+  }
+}
+
 
 
 /**
  * Saves a full audit result for a specific page to KV
  * This allows us to aggregate results later without keeping everything in memory
+ * OPTIMIZATION: Excludes screenshots to save Redis memory (screenshots are large base64 strings)
  */
 export async function savePageResult(jobId: string, url: string, result: any): Promise<void> {
   await initializeKv();
@@ -797,12 +877,34 @@ export async function savePageResult(jobId: string, url: string, result: any): P
       // Use hashing or encoding for URL to ensure valid key
       const safeUrl = Buffer.from(url).toString('base64');
       const kvKey = `audit:result:${jobId}:${safeUrl}`;
-      const resultJson = JSON.stringify(result);
-
-      await kv.set(kvKey, resultJson, { ex: 3600 * 2 }); // Keep for 2 hours
-      console.log(`✅ Saved page result to KV: ${jobId} / ${url}`);
+      
+      // OPTIMIZATION: Remove screenshot to save Redis memory (screenshots can be 100KB-2MB+)
+      // Screenshots are only needed for display, not for aggregation
+      const resultWithoutScreenshot = { ...result };
+      const screenshotSize = resultWithoutScreenshot.screenshot ? resultWithoutScreenshot.screenshot.length : 0;
+      delete resultWithoutScreenshot.screenshot;
+      
+      const resultJson = JSON.stringify(resultWithoutScreenshot);
+      const sizeKB = Math.round(resultJson.length / 1024);
+      
+      // Reduced expiration to 1 hour (from 2 hours) to free up memory faster
+      await kv.set(kvKey, resultJson, { ex: 3600 }); // Keep for 1 hour
+      
+      if (screenshotSize > 0) {
+        const screenshotSizeKB = Math.round(screenshotSize / 1024);
+        console.log(`✅ Saved page result to KV: ${jobId} / ${url} (${sizeKB}KB, excluded ${screenshotSizeKB}KB screenshot)`);
+      } else {
+        console.log(`✅ Saved page result to KV: ${jobId} / ${url} (${sizeKB}KB)`);
+      }
     } catch (e: any) {
-      console.error(`❌ Failed to save page result to KV: ${e.message}`);
+      // Handle Redis OOM (Out of Memory) errors specifically
+      if (e.message && e.message.includes('OOM') || e.message.includes('maxmemory')) {
+        console.error(`❌ Redis OOM: Failed to save page result to KV (Redis out of memory)`);
+        console.error(`   Consider: 1) Upgrading Redis plan, 2) Cleaning old data, 3) Reducing data size`);
+        console.error(`   Job will continue but results may not persist across invocations`);
+      } else {
+        console.error(`❌ Failed to save page result to KV: ${e.message}`);
+      }
     }
   } else {
     // Fallback? Ideally we'd store in a Map, but for serverless we really need KV.
