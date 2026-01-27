@@ -65,16 +65,16 @@ async function initializeKv() {
     const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build' ||
       process.env.NEXT_PHASE === 'phase-development-build';
 
-    // In Vercel serverless, we should always initialize (even during build if it's a serverless function)
-    // Only skip if we're in actual build phase AND not in Vercel
-    if (isBuildPhase && !process.env.VERCEL) {
+    // Skip initialization during build phase (unless in Netlify/Vercel where functions need it)
+    // Netlify and Vercel serverless functions need database access even during build
+    if (isBuildPhase && !process.env.VERCEL && !process.env.NETLIFY) {
       console.log('⚠️ Skipping KV initialization during build/static generation');
       kvInitialized = true;
       return;
     }
 
-    // If we're in Vercel, always allow initialization (serverless functions need it)
-    if (process.env.VERCEL) {
+    // If we're in Vercel or Netlify, always allow initialization (serverless functions need it)
+    if (process.env.VERCEL || process.env.NETLIFY) {
       // This is fine - continue with initialization
     }
   }

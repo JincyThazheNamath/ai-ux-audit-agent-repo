@@ -137,8 +137,9 @@ export async function dbKeys(pattern: string): Promise<string[]> {
     const db = await initializeDb();
     
     // Convert Redis pattern to SQL LIKE pattern
-    // audit:progress:* -> audit_progress%
-    const sqlPattern = pattern.replace(/:/g, '_').replace(/\*/g, '%');
+    // audit:progress:* -> audit:progress:%
+    // Keep colons as-is since we store keys with colons
+    const sqlPattern = pattern.replace(/\*/g, '%');
     
     const result = await db`
       SELECT job_id 
@@ -226,20 +227,31 @@ export async function dbCleanup(): Promise<number> {
   try {
     const db = await initializeDb();
     
-    // Delete expired progress records
+    // Delete expired progress records and get count
     const progressResult = await db`
-      DELETE FROM audit_progress 
-      WHERE expires_at IS NOT NULL AND expires_at < NOW()
+      WITH deleted AS (
+        DELETE FROM audit_progress 
+        WHERE expires_at IS NOT NULL AND expires_at < NOW()
+        RETURNING job_id
+      )
+      SELECT COUNT(*) as count FROM deleted
     `;
     
-    // Delete expired page results
+    // Delete expired page results and get count
     const resultsResult = await db`
-      DELETE FROM audit_page_results 
-      WHERE expires_at IS NOT NULL AND expires_at < NOW()
+      WITH deleted AS (
+        DELETE FROM audit_page_results 
+        WHERE expires_at IS NOT NULL AND expires_at < NOW()
+        RETURNING id
+      )
+      SELECT COUNT(*) as count FROM deleted
     `;
     
-    // Count deleted records (PostgreSQL returns rowCount)
-    const totalDeleted = (progressResult.length || 0) + (resultsResult.length || 0);
+    // Extract counts from result arrays
+    const progressCount = parseInt(progressResult[0]?.count || '0', 10);
+    const resultsCount = parseInt(resultsResult[0]?.count || '0', 10);
+    const totalDeleted = progressCount + resultsCount;
+    
     return totalDeleted;
   } catch (error: any) {
     console.error(`❌ Failed to cleanup Neon: ${error.message}`);
