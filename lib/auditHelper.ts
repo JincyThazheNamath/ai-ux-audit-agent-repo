@@ -246,7 +246,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
         });
         clearTimeout(timeoutId);
         // Wait a short time for critical resources
-        await page.waitForTimeout(3000); // 3 seconds for critical resources
+        await new Promise(resolve => setTimeout(resolve, 3000)); // 3 seconds for critical resources
         console.log(`  ✅ Page loaded successfully (domcontentloaded)`);
       } catch (domError: any) {
         clearTimeout(timeoutId);
@@ -266,7 +266,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
               waitUntil: 'domcontentloaded', // Fastest valid option
               timeout: 10000 // 10 seconds max
             });
-            await page.waitForTimeout(2000); // Wait 2 seconds for basic content
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds for basic content
             console.log(`  ✅ Page navigation completed (minimal wait)`);
           } catch (finalError: any) {
             // If even domcontentloaded fails, try without waitUntil (just navigate)
@@ -276,7 +276,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
             }).catch(() => {
               // Ignore errors - page may still be partially loaded
             });
-            await page.waitForTimeout(3000); // Wait 3 seconds for any content
+            await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds for any content
             console.log(`  ✅ Page navigation attempted (best effort)`);
           }
         }
