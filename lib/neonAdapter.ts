@@ -75,8 +75,10 @@ export async function dbGet(key: string): Promise<string | null> {
   try {
     const db = await initializeDb();
     
-    // Clean up expired records first
-    await db`DELETE FROM audit_progress WHERE expires_at < NOW()`;
+    // Clean up expired records asynchronously (don't block the get operation)
+    db`DELETE FROM audit_progress WHERE expires_at IS NOT NULL AND expires_at < NOW()`.catch(() => {
+      // Ignore cleanup errors
+    });
     
     const result = await db`
       SELECT progress_data::text as data 
