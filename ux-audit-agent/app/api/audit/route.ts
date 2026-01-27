@@ -8,8 +8,8 @@ import * as path from 'path';
 
 // Runtime configuration - Node.js runtime required for Puppeteer
 // Note: Edge Runtime is not compatible with Puppeteer, so we use Node.js runtime
+// Netlify Pro: 26s timeout max
 export const runtime = 'nodejs';
-export const maxDuration = 60; // Maximum execution time in seconds
 
 /**
  * STANDARDIZED AUDIT EXECUTION FOR ENVIRONMENT PARITY:

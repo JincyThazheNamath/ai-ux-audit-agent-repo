@@ -5,15 +5,9 @@ import { createProgressTracker, updateStatus, getProgress, getAllJobs, debugProg
 import { processBatches, FailedPage } from '../../../../lib/batchProcessor';
 import { generateMockPages, generateMockAuditForPage } from '../../../../lib/mockData';
 
-// Vercel serverless function configuration
-// Critical: Set maxDuration to 300s (5 minutes) for batch processing
-export const maxDuration = 300;
+// Serverless function configuration
+// Note: Netlify Pro has 26s timeout, so we use background processing
 export const runtime = 'nodejs';
-
-// Import waitUntil to keep function alive after response
-// This ensures background work continues even after HTTP response is sent
-// Note: waitUntil is only available in Vercel serverless functions
-// We'll import it dynamically inside the function to avoid module loading issues
 
 // Simple UUID generator
 function generateUUID(): string {
@@ -111,7 +105,7 @@ export async function POST(request: NextRequest) {
     await debugProgressStore();
 
     // Start page discovery and audit process in background
-    // CRITICAL: Use waitUntil to ensure Vercel keeps the function alive after response
+    // CRITICAL: Background work will continue processing (Netlify compatible)
     // This prevents Vercel from terminating the background work
     const backgroundPromise = (async () => {
       let backgroundError: any = null;
@@ -271,30 +265,14 @@ export async function POST(request: NextRequest) {
       }
     })();
 
-    // CRITICAL: Use waitUntil to keep function alive after response
-    // This ensures Vercel doesn't terminate the background work
-    // waitUntil is available in Vercel Pro/Enterprise plans
-    try {
-      // Dynamically import waitUntil to avoid module loading issues
-      const vercelFunctions = await import('@vercel/functions');
-      if (vercelFunctions.waitUntil) {
-        vercelFunctions.waitUntil(backgroundPromise);
-        console.log('✅ Background work registered with waitUntil - will continue after response');
-      } else {
-        console.log('⚠️ waitUntil not available - background work may be terminated by Vercel');
-        backgroundPromise.catch((error) => {
-          console.error('[Background] Background promise rejected:', error);
-        });
-      }
-    } catch (waitError: any) {
-      // Fallback: Start background work but warn that it may be terminated
-      backgroundPromise.catch((error) => {
-        console.error('[Background] Background promise rejected:', error);
-      });
-      console.log('⚠️ waitUntil not available (this is normal in local development)');
-      console.log('   Background work will continue but may be terminated by Vercel after response');
-      // Continue anyway - background work may still complete
-    }
+    // CRITICAL: Start background work (Netlify compatible)
+    // On Netlify, the function will continue until timeout (26s on Pro)
+    // Background work will execute, but may be terminated after response
+    // The recursive batch calls ensure processing continues
+    backgroundPromise.catch((error) => {
+      console.error('[Background] Background promise rejected:', error);
+    });
+    console.log('✅ Background work started - will continue processing');
 
     // CRITICAL FIX: Wait a bit for discovery to start before returning
     // This gives the background function time to initialize

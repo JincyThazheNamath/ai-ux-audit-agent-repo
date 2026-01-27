@@ -4,7 +4,8 @@ import { processBatches } from '../../../../lib/batchProcessor';
 import { aggregateAuditResults, sortPagesBySeverity } from '../../../../lib/batchAuditor';
 
 // Vercel serverless function configuration
-export const maxDuration = 300; // 5 minutes max
+// Serverless function configuration
+// Netlify Pro: 26s timeout max
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
