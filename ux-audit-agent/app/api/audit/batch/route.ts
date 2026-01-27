@@ -29,23 +29,70 @@ export async function POST(request: NextRequest) {
             .map(p => p.url);
 
         if (pendingPages.length === 0) {
-            console.log(`[Batch] ✅ No pending pages. Job completed.`);
+            console.log(`[Batch] ✅ No pending pages. Checking if aggregation needed...`);
 
-            // Final Aggregation
-            const completedPages = progress.pageResults.filter(p => p.status === 'completed' && p.score !== undefined);
-            // We need to re-fetch the full results to aggregate, but progressTracker mainly stores status.
-            // In a real DB scenario, we'd fetch full results. 
-            // For now, we assume the individual page results are stored in KV or similar if needed for aggregation.
-            // However, the current architecture might rely on `processBatches` returning results.
-            // Since we are decoupling, we might need to rely on the fact that `updatePageProgress` likely just saves status/score.
-            // The original `site/route.ts` did `saveFinalResult` with aggregated data.
-            // We might need to store intermediate results in Redis or just aggregate what we have.
+            // Check if finalResult already exists (aggregation already done)
+            const hasFinalResult = !!(progress as any).finalResult;
+            
+            if (hasFinalResult) {
+                console.log(`[Batch] ✅ Final result already exists. Job completed.`);
+                if (progress.status !== 'completed') {
+                    await updateStatus(jobId, 'completed');
+                }
+                return NextResponse.json({ status: 'completed', message: 'All pages processed' });
+            }
 
-            // For this fix, let's assume we mark it as completed first.
-            // To do proper aggregation we would need to fetch all individual results.
-            // Given the constraints, let's update status to completed.
+            // No final result yet - need to aggregate
+            console.log(`[Batch] 🔄 No final result found. Starting aggregation...`);
+            
+            try {
+                await updateStatus(jobId, 'aggregating');
+                
+                // Get all page results for aggregation
+                const { getAllPageResults } = await import('../../../../../lib/progressTracker');
+                const allResults = await getAllPageResults(jobId);
 
-            if (progress.status !== 'completed') {
+                if (allResults.length > 0) {
+                    console.log(`[Batch] 📊 Aggregating ${allResults.length} page results...`);
+                    
+                    // Determine base URL: use the first page URL's origin, or the first URL itself
+                    const baseUrl = allResults[0]?.url ? (() => {
+                        try {
+                            const urlObj = new URL(allResults[0].url);
+                            return `${urlObj.protocol}//${urlObj.host}`;
+                        } catch {
+                            return allResults[0].url;
+                        }
+                    })() : 'unknown';
+                    
+                    const aggregated = aggregateAuditResults(allResults, baseUrl);
+                    const sortedPages = sortPagesBySeverity(allResults);
+
+                    // Get failed pages
+                    const failedPages = progress.pageResults.filter(p => p.status === 'failed');
+
+                    await saveFinalResult(jobId, {
+                        aggregated,
+                        sortedPages,
+                        pageResults: allResults,
+                        failedPages: failedPages.map(p => ({
+                            url: p.url,
+                            error: 'Audit failed',
+                            errorType: 'unknown',
+                            retryable: true
+                        })),
+                        isMockData: false
+                    });
+                    console.log(`[Batch] ✅ Final aggregation completed and saved.`);
+                } else {
+                    console.warn(`[Batch] ⚠️ No results found to aggregate.`);
+                }
+
+                await updateStatus(jobId, 'completed');
+                console.log(`[Batch] ✅ Job marked as completed.`);
+            } catch (aggError: any) {
+                console.error(`[Batch] ❌ Aggregation error:`, aggError);
+                // Still mark as completed even if aggregation fails
                 await updateStatus(jobId, 'completed');
             }
 
@@ -148,7 +195,18 @@ export async function POST(request: NextRequest) {
 
                 if (allResults.length > 0) {
                     console.log(`[Batch] 📊 Aggregating ${allResults.length} page results...`);
-                    const aggregated = aggregateAuditResults(allResults, allResults[0].url);
+                    
+                    // Determine base URL: use the first page URL's origin, or the first URL itself
+                    const baseUrl = allResults[0]?.url ? (() => {
+                        try {
+                            const urlObj = new URL(allResults[0].url);
+                            return `${urlObj.protocol}//${urlObj.host}`;
+                        } catch {
+                            return allResults[0].url;
+                        }
+                    })() : 'unknown';
+                    
+                    const aggregated = aggregateAuditResults(allResults, baseUrl);
                     const sortedPages = sortPagesBySeverity(allResults);
 
                     // Get failed pages
