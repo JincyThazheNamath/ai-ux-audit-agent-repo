@@ -1,0 +1,19 @@
+{
+  "functions": {
+    "app/api/audit/route.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next"
+}
+
+
+
+
+
+
+
+
+

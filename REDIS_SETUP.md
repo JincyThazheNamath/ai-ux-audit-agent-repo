@@ -96,3 +96,4 @@ The project was migrated from `ioredis` to `redis` package to follow Vercel's of
 - `redis.setEx()` instead of `redis.setex()`
 - `redis.isOpen` and `redis.isReady` for connection status
 
+

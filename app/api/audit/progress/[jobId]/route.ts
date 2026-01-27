@@ -1,15 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getProgress, formatTimeLeft, getAllJobs, debugProgressStore } from '../../../../../lib/progressTracker';
 
-// Next.js 14 route handler signature
-// In Next.js 14, the signature is: GET(request, { params })
+// Next.js 15 compatible route handler signature
+// In Next.js 15, params is async and must be awaited
+// This code is backward compatible with Next.js 14
 export async function GET(
   request: NextRequest,
-  { params }: { params: { jobId: string } }
+  context: { params: Promise<{ jobId: string }> | { jobId: string } }
 ) {
   try {
-    // Extract jobId from params (Next.js 14 uses sync params)
+    // Extract jobId from params (Next.js 15 uses async params, Next.js 14 uses sync)
     let jobId: string | null = null;
+    
+    // Handle both Next.js 14 (sync) and Next.js 15 (async) params
+    let params: { jobId: string };
+    if (context.params instanceof Promise) {
+      // Next.js 15: params is a Promise
+      params = await context.params;
+    } else {
+      // Next.js 14: params is a plain object
+      params = context.params;
+    }
     
     // Try to get from params first
     try {

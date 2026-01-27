@@ -31,20 +31,14 @@ yarn-error.log*
 
 # vercel
 .vercel
-.env.vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
-.env*.local
-
 .vercel
 .env*.local
 
-# Local Netlify folder
-.netlify
-
-# Temporary files
-dev-server-output.txt
+# logs
+/logs
 *.log
