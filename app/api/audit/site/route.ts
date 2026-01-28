@@ -20,7 +20,7 @@ function generateUUID(): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const { url, maxPages = 40, maxDepth = 3, useMockData = false } = await request.json();
+    const { url, maxPages = 40, maxDepth = 3, useMockData = false, retryUrls } = await request.json();
 
     // Check environment variable for mock data mode
     const forceMockData = process.env.USE_MOCK_DATA === 'true' || useMockData;
@@ -47,12 +47,27 @@ export async function POST(request: NextRequest) {
 
     // Initialize progress tracker immediately (before async operation)
     // This ensures the job exists for polling even before discovery starts
-    const initialProgress = await createProgressTracker(jobId, 1); // Temporary, will be updated
-    initialProgress.pageResults = [{
-      url: targetUrl.toString(),
-      status: 'pending' as const,
-    }];
-    await updateStatus(jobId, 'discovering');
+    const initialPageCount = retryUrls && Array.isArray(retryUrls) && retryUrls.length > 0 
+      ? retryUrls.length 
+      : 1; // Temporary, will be updated after discovery
+    
+    const initialProgress = await createProgressTracker(jobId, initialPageCount);
+    
+    if (retryUrls && Array.isArray(retryUrls) && retryUrls.length > 0) {
+      // Retry mode: Set up pages immediately
+      initialProgress.pageResults = retryUrls.map(url => ({
+        url,
+        status: 'pending' as const,
+      }));
+      await updateStatus(jobId, 'auditing', `Retrying ${retryUrls.length} failed pages...`);
+    } else {
+      // Normal mode: Single placeholder page
+      initialProgress.pageResults = [{
+        url: targetUrl.toString(),
+        status: 'pending' as const,
+      }];
+      await updateStatus(jobId, 'discovering');
+    }
 
     // Verify job was created and can be retrieved immediately
     // Add retry logic for KV latency in production
@@ -121,49 +136,63 @@ export async function POST(request: NextRequest) {
         console.log(`[Background] Starting full-site audit for ${targetUrl.toString()}...`);
         console.log(`[Background] Job ID: ${jobId}`);
 
-        // Step 1: Discover pages
-        console.log(`[Background] 🔍 Discovering pages for ${targetUrl.toString()}...`);
-        await updateStatus(jobId, 'discovering', 'Starting page discovery...');
+        let pageUrls: string[];
+        let actualPageCount: number;
 
-        // Persist status immediately to ensure it's saved
-        const discoverStatusCheck = await getProgress(jobId);
-        if (!discoverStatusCheck || discoverStatusCheck.status !== 'discovering') {
-          console.error('[Background] ⚠️ Status not persisted, retrying...');
+        // Check if this is a retry request (has retryUrls)
+        if (retryUrls && Array.isArray(retryUrls) && retryUrls.length > 0) {
+          // Retry mode: Skip discovery and use provided URLs directly
+          console.log(`[Background] 🔄 Retry mode: Processing ${retryUrls.length} failed URLs`);
+          pageUrls = retryUrls;
+          actualPageCount = retryUrls.length;
+          
+          // Update status to auditing (skip discovery phase)
+          await updateStatus(jobId, 'auditing', `Retrying ${actualPageCount} failed pages...`);
+        } else {
+          // Normal mode: Discover pages
+          console.log(`[Background] 🔍 Discovering pages for ${targetUrl.toString()}...`);
           await updateStatus(jobId, 'discovering', 'Starting page discovery...');
-        }
 
-        // Add timeout for discovery (60 seconds max)
-        const discoveryPromise = discoverPagesWithDepth(targetUrl.toString(), {
-          maxPages,
-          maxDepth,
-        });
+          // Persist status immediately to ensure it's saved
+          const discoverStatusCheck = await getProgress(jobId);
+          if (!discoverStatusCheck || discoverStatusCheck.status !== 'discovering') {
+            console.error('[Background] ⚠️ Status not persisted, retrying...');
+            await updateStatus(jobId, 'discovering', 'Starting page discovery...');
+          }
 
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Discovery timeout: Page discovery took longer than 60 seconds')), 60000)
-        );
-
-        let discoveredPages: Awaited<ReturnType<typeof discoverPagesWithDepth>>;
-        try {
-          discoveredPages = await Promise.race([discoveryPromise, timeoutPromise]);
-        } catch (discoveryError: any) {
-          console.error('❌ Discovery failed or timed out:', discoveryError.message);
-          await updateStatus(jobId, 'failed');
-          await saveFinalResult(jobId, {
-            error: `Page discovery failed: ${discoveryError.message}`,
-            errorType: 'discovery_failed',
-            failedPages: [],
-            aggregated: null,
-            sortedPages: [],
-            pageResults: [],
-            isMockData: false,
+          // Add timeout for discovery (60 seconds max)
+          const discoveryPromise = discoverPagesWithDepth(targetUrl.toString(), {
+            maxPages,
+            maxDepth,
           });
-          return;
+
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Discovery timeout: Page discovery took longer than 60 seconds')), 60000)
+          );
+
+          let discoveredPages: Awaited<ReturnType<typeof discoverPagesWithDepth>>;
+          try {
+            discoveredPages = await Promise.race([discoveryPromise, timeoutPromise]);
+          } catch (discoveryError: any) {
+            console.error('❌ Discovery failed or timed out:', discoveryError.message);
+            await updateStatus(jobId, 'failed');
+            await saveFinalResult(jobId, {
+              error: `Page discovery failed: ${discoveryError.message}`,
+              errorType: 'discovery_failed',
+              failedPages: [],
+              aggregated: null,
+              sortedPages: [],
+              pageResults: [],
+              isMockData: false,
+            });
+            return;
+          }
+
+          pageUrls = discoveredPages.map(page => page.url);
+          actualPageCount = Math.min(pageUrls.length, maxPages);
+
+          console.log(`✅ Discovered ${actualPageCount} pages`);
         }
-
-        const pageUrls = discoveredPages.map(page => page.url);
-        const actualPageCount = Math.min(pageUrls.length, maxPages);
-
-        console.log(`✅ Discovered ${actualPageCount} pages`);
 
         // Update progress tracker with discovered pages
         let progress = await getProgress(jobId);
@@ -181,7 +210,10 @@ export async function POST(request: NextRequest) {
 
         // Save updated progress - ensure it's persisted
         console.log(`[Background] 📝 Updating status to 'auditing'...`);
-        await updateStatus(jobId, 'auditing', `Found ${actualPageCount} pages, starting audit...`);
+        const statusMessage = retryUrls && Array.isArray(retryUrls) && retryUrls.length > 0
+          ? `Retrying ${actualPageCount} failed pages, starting audit...`
+          : `Found ${actualPageCount} pages, starting audit...`;
+        await updateStatus(jobId, 'auditing', statusMessage);
 
         // Double-check it was saved with retries
         let verifyProgress = await getProgress(jobId);

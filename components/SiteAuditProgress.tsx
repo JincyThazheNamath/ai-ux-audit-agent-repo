@@ -107,8 +107,8 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
       pollProgress();
     }, 1000);
 
-    // Poll every 2 seconds after initial delay
-    const interval = setInterval(pollProgress, 2000);
+    // Poll every 1.5 seconds for faster updates (optimized for small batches)
+    const interval = setInterval(pollProgress, 1500);
 
     return () => {
       clearTimeout(initialTimeout);
@@ -150,7 +150,9 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
       case 'discovering':
         return 'Discovering pages...';
       case 'auditing':
-        return `Auditing pages... (${progress.completedPages}/${progress.totalPages})`;
+        const remaining = progress.totalPages - progress.completedPages;
+        const estimatedBatches = Math.ceil(remaining / 2); // Assuming 2 pages per batch
+        return `Auditing pages... (${progress.completedPages}/${progress.totalPages} completed, ~${estimatedBatches} batches remaining)`;
       case 'aggregating':
         return 'Aggregating results...';
       case 'completed':
@@ -218,6 +220,21 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
             </div>
           </div>
         </div>
+        
+        {/* Batch Progress Indicator */}
+        {progress.status === 'auditing' && progress.totalPages > 2 && (
+          <div className="bg-[#0a1628] rounded-lg p-3 border border-teal-500/20">
+            <div className="flex items-center gap-2 text-sm">
+              <Loader2 className="animate-spin text-teal-500" size={16} />
+              <span className="text-gray-300">
+                Processing in batches of 2 pages (optimized for speed)
+              </span>
+            </div>
+            <div className="mt-2 text-xs text-gray-400">
+              Each batch completes in ~15-20 seconds
+            </div>
+          </div>
+        )}
 
         {/* Page List */}
         {progress.pageResults.length > 0 && (

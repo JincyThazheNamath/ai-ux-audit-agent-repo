@@ -23,11 +23,11 @@ export interface BatchConfig {
 }
 
 const DEFAULT_CONFIG: BatchConfig = {
-  batchSize: 3, // Reduced to avoid overwhelming browser/API
-  delayBetweenBatches: 2000, // 2 seconds between batches
-  delayBetweenRequests: 1000, // 1 second between requests
-  maxRetries: 2, // Reduced retries to fail faster and move to next page
-  timeoutPerPage: 45000, // 45 seconds per page (reduced to fail faster and move to next page)
+  batchSize: 2, // Optimized for Netlify 26s limit: 2 pages × 10s = 20s max
+  delayBetweenBatches: 0, // No delay needed for small batches
+  delayBetweenRequests: 500, // Reduced to 500ms for faster processing
+  maxRetries: 1, // Single retry to fail fast and stay within timeout
+  timeoutPerPage: 10000, // 10 seconds per page (optimized for Netlify 26s limit)
 };
 
 /**
@@ -187,6 +187,11 @@ async function auditSinglePageWithRetry(
 
         const auditDuration = Date.now() - auditStartTime;
         console.log(`[auditSinglePageWithRetry] ✅ Audit completed in ${auditDuration}ms`);
+        
+        // Log warning if page took too long (close to timeout)
+        if (auditDuration > config.timeoutPerPage * 0.8) {
+          console.warn(`[auditSinglePageWithRetry] ⚠️ Page took ${auditDuration}ms (${Math.round(auditDuration/config.timeoutPerPage*100)}% of timeout limit)`);
+        }
 
         return result;
       } catch (error: any) {
@@ -297,11 +302,11 @@ export async function processBatches(
     // Continue anyway - status update failure shouldn't stop processing
   }
 
-  const batchStartTime = Date.now();
+  const overallStartTime = Date.now();
 
   // Add heartbeat to verify batch processing is running
   const heartbeatInterval = setInterval(() => {
-    const elapsed = Date.now() - batchStartTime;
+    const elapsed = Date.now() - overallStartTime;
     console.log(`[processBatches] 💓 Heartbeat: Still processing... ${successful.length} completed, ${failed.length} failed (elapsed: ${(elapsed / 1000).toFixed(1)}s)`);
   }, 30000); // Every 30 seconds
 
@@ -333,6 +338,7 @@ export async function processBatches(
       const batch = batches[i];
       const batchNumber = i + 1;
 
+      const batchStartTime = Date.now();
       console.log(`\n[processBatches] 🔄 Processing batch ${batchNumber}/${batches.length} (${batch.length} pages)`);
       console.log(`[processBatches] Batch pages: ${batch.join(', ')}`);
 
@@ -491,7 +497,15 @@ export async function processBatches(
       }
     }
 
-    const totalDuration = Date.now() - batchStartTime;
+    const batchDuration = Date.now() - batchStartTime;
+    console.log(`[processBatches] ⏱️ Batch ${batchNumber}/${batches.length} duration: ${batchDuration}ms`);
+    
+    // Log warning if batch took too long (close to Netlify 26s limit)
+    if (batchDuration > 24000) {
+      console.warn(`[processBatches] ⚠️ WARNING: Batch took ${batchDuration}ms - very close to Netlify 26s limit!`);
+    }
+    
+    const totalDuration = Date.now() - overallStartTime;
     console.log(`[processBatches] ⏱️ Total batch processing duration: ${totalDuration}ms`);
   }
 

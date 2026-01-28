@@ -230,8 +230,10 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
 
     // Navigate to page with aggressive timeouts to prevent hanging
     console.log(`  📄 Loading page: ${targetUrl.toString()}`);
-    const PAGE_LOAD_TIMEOUT = 30000; // 30 seconds max for page load (reduced to fail faster)
-    const DOM_CONTENT_TIMEOUT = 20000; // 20 seconds for domcontentloaded fallback
+    // Optimized for Netlify 26s limit: reduce page load timeouts
+    // Total per page: ~8s page load + ~2s AI analysis = 10s max per page
+    const PAGE_LOAD_TIMEOUT = 8000; // 8 seconds max for page load (optimized for Netlify)
+    const DOM_CONTENT_TIMEOUT = 6000; // 6 seconds for domcontentloaded fallback
 
     try {
       // Use AbortController to ensure we can cancel if needed
@@ -245,8 +247,8 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
           timeout: DOM_CONTENT_TIMEOUT
         });
         clearTimeout(timeoutId);
-        // Wait a short time for critical resources
-        await new Promise(resolve => setTimeout(resolve, 3000)); // 3 seconds for critical resources
+        // Wait a short time for critical resources (reduced for speed)
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 seconds for critical resources
         console.log(`  ✅ Page loaded successfully (domcontentloaded)`);
       } catch (domError: any) {
         clearTimeout(timeoutId);
@@ -255,7 +257,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
         try {
           await page.goto(targetUrl.toString(), {
             waitUntil: 'load',
-            timeout: 15000 // 15 seconds max
+            timeout: 6000 // 6 seconds max (optimized)
           });
           console.log(`  ✅ Page loaded successfully (load event fallback)`);
         } catch (loadError: any) {
@@ -264,19 +266,19 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
           try {
             await page.goto(targetUrl.toString(), {
               waitUntil: 'domcontentloaded', // Fastest valid option
-              timeout: 10000 // 10 seconds max
+              timeout: 5000 // 5 seconds max (optimized)
             });
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds for basic content
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second for basic content
             console.log(`  ✅ Page navigation completed (minimal wait)`);
           } catch (finalError: any) {
             // If even domcontentloaded fails, try without waitUntil (just navigate)
             console.log(`  ⚠️ All wait strategies failed, attempting basic navigation...`);
             await page.goto(targetUrl.toString(), {
-              timeout: 5000 // Very short timeout
+              timeout: 3000 // Very short timeout (optimized)
             }).catch(() => {
               // Ignore errors - page may still be partially loaded
             });
-            await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds for any content
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds for any content
             console.log(`  ✅ Page navigation attempted (best effort)`);
           }
         }
@@ -456,7 +458,9 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
 
     let message: any = null;
     const rateLimiter = getRateLimiter();
-    const AI_ANALYSIS_TIMEOUT = 30000; // 30 seconds max for AI analysis
+    // Optimized for Netlify 26s limit: reduce AI analysis timeout
+    // Page load: ~8s max, AI analysis: ~2s max = 10s total per page
+    const AI_ANALYSIS_TIMEOUT = 20000; // 20 seconds max for AI analysis (reduced from 30s)
 
     for (const modelName of modelNames) {
       try {
