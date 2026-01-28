@@ -356,44 +356,40 @@ export async function processBatches(
 
         // CRITICAL: Check if page is still pending before processing
         // This prevents re-auditing completed pages
+        // Note: We only check status, don't retrieve full results to avoid overhead
+        let shouldSkipPage = false;
         try {
           const { getProgress } = await import('./progressTracker');
           const currentProgress = await getProgress(jobId);
-          if (currentProgress) {
-            const pageStatus = currentProgress.pageResults.find(p => p.url === pageUrl)?.status;
+          if (currentProgress && Array.isArray(currentProgress.pageResults)) {
+            const pageResult = currentProgress.pageResults.find(p => p && p.url === pageUrl);
+            const pageStatus = pageResult?.status;
             
-            if (pageStatus === 'completed') {
+            if (!pageStatus) {
+              console.warn(`[processBatches] ⚠️ Page ${pageUrl} not found in progress, will attempt audit`);
+              // Continue - page might be new
+            } else if (pageStatus === 'completed') {
               console.log(`[processBatches] ⏭️ Skipping ${pageUrl} - already completed`);
-              // Add to successful results if we have the result
-              try {
-                const { getPageResult } = await import('./progressTracker');
-                const existingResult = await getPageResult(jobId, pageUrl);
-                if (existingResult) {
-                  successful.push(existingResult);
-                  console.log(`[processBatches] ✅ Added existing result for ${pageUrl}`);
-                }
-              } catch (e) {
-                console.warn(`[processBatches] ⚠️ Could not retrieve existing result for ${pageUrl}`);
-              }
-              continue; // Skip this page
-            }
-            
-            if (pageStatus === 'failed') {
+              shouldSkipPage = true;
+            } else if (pageStatus === 'failed') {
               console.log(`[processBatches] ⏭️ Skipping ${pageUrl} - already marked as failed`);
-              continue; // Skip this page (unless it's a retry, but that's handled by the retry endpoint)
-            }
-            
-            if (pageStatus !== 'pending' && pageStatus !== 'processing') {
+              shouldSkipPage = true;
+            } else if (pageStatus !== 'pending' && pageStatus !== 'processing') {
               console.log(`[processBatches] ⏭️ Skipping ${pageUrl} - status is ${pageStatus}`);
-              continue; // Skip pages that aren't pending or processing
+              shouldSkipPage = true;
+            } else {
+              // Only process if status is 'pending' or 'processing'
+              console.log(`[processBatches] ✅ Page ${pageUrl} is ${pageStatus}, proceeding with audit`);
             }
-            
-            // Only process if status is 'pending' or 'processing'
-            console.log(`[processBatches] ✅ Page ${pageUrl} is ${pageStatus}, proceeding with audit`);
           }
         } catch (statusCheckError: any) {
           console.error(`[processBatches] ⚠️ Failed to check page status for ${pageUrl}: ${statusCheckError.message}`);
-          // Continue anyway - better to try than skip
+          // Continue anyway - better to try than skip to avoid blocking
+          // Don't set shouldSkipPage - allow audit to proceed
+        }
+        
+        if (shouldSkipPage) {
+          continue; // Skip this page
         }
 
         // Add delay between requests (except first)

@@ -11,9 +11,18 @@ export const runtime = 'nodejs';
 export async function POST(request: NextRequest) {
     const functionStartTime = Date.now();
     try {
-        const { jobId } = await request.json();
-
-        if (!jobId) {
+        // Validate request body
+        let requestBody;
+        try {
+            requestBody = await request.json();
+        } catch (jsonError: any) {
+            console.error(`[Batch] ❌ Invalid JSON in request: ${jsonError.message}`);
+            return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+        }
+        
+        const { jobId } = requestBody;
+        if (!jobId || typeof jobId !== 'string') {
+            console.error(`[Batch] ❌ Missing or invalid jobId in request`);
             return NextResponse.json({ error: 'Job ID is required' }, { status: 400 });
         }
 
@@ -79,15 +88,18 @@ export async function POST(request: NextRequest) {
         // 4. Process this batch with optimized timeouts
         const batchStartTime = Date.now();
         try {
-            await processBatches(currentBatchUrls, jobId, {
+            const batchResult = await processBatches(currentBatchUrls, jobId, {
                 batchSize: BATCH_SIZE,
                 delayBetweenBatches: 0, // No delay needed - we're processing one small batch
                 delayBetweenRequests: 500, // Reduced from 1000ms to 500ms for faster processing
                 maxRetries: 1, // Single retry to fail fast
                 timeoutPerPage: 20000 // Increased to 20s per page for better success rate
             });
+            console.log(`[Batch] ✅ Batch processed: ${batchResult.successful.length} successful, ${batchResult.failed.length} failed`);
         } catch (err: any) {
             console.error(`[Batch] ⚠️ Batch processing error: ${err.message}`);
+            console.error(`[Batch] Error stack:`, err.stack);
+            // Don't throw - allow function to continue and check remaining pages
         }
         
         const batchDuration = Date.now() - batchStartTime;
@@ -99,11 +111,6 @@ export async function POST(request: NextRequest) {
             ? updatedProgress.pageResults
                 .filter(p => p.status === 'pending')
                 .map(p => p.url)
-                .filter(url => {
-                  // Double-check status to ensure we don't include completed pages
-                  const pageStatus = updatedProgress.pageResults.find(p => p.url === url)?.status;
-                  return pageStatus === 'pending';
-                })
             : [];
 
         // 6. Recursive Call or Finalization
