@@ -899,8 +899,9 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
 
   // Fallback to memory only in dev mode (not production)
   if (!progress && !isProduction) {
-    progress = progressStore.get(cleanJobId);
-    if (progress) {
+    const memoryProgress = progressStore.get(cleanJobId);
+    if (memoryProgress) {
+      progress = memoryProgress;
       console.log(`✅ Found progress in memory: ${cleanJobId}`);
     }
   }
