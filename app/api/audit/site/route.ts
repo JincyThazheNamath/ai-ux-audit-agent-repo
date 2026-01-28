@@ -194,21 +194,69 @@ export async function POST(request: NextRequest) {
           console.log(`✅ Discovered ${actualPageCount} pages`);
         }
 
-        // Update progress tracker with discovered pages
+        // Update progress tracker with discovered pages (or retry URLs)
         let progress = await getProgress(jobId);
         if (!progress) {
-          console.error('❌ CRITICAL: Job not found after discovery');
+          console.error('❌ CRITICAL: Job not found after discovery/retry setup');
           // Try to recreate the job
           progress = await createProgressTracker(jobId, actualPageCount);
         }
 
-        progress.totalPages = actualPageCount;
-        progress.pageResults = pageUrls.slice(0, actualPageCount).map(url => ({
-          url,
-          status: 'pending' as const,
-        }));
+        // For retry mode, ensure we don't overwrite existing pending pages
+        // For normal mode, update with discovered pages
+        if (retryUrls && Array.isArray(retryUrls) && retryUrls.length > 0) {
+          // Retry mode: Verify pages are set correctly (they should already be set in initial setup)
+          console.log(`[Background] 🔄 Retry mode: Verifying ${retryUrls.length} retry URLs are set as pending`);
+          const existingUrls = progress.pageResults.map(p => p.url);
+          const retryUrlsSet = new Set(retryUrls);
+          
+          // Check if all retry URLs are present and marked as pending
+          const missingUrls = retryUrls.filter(url => !existingUrls.includes(url));
+          if (missingUrls.length > 0) {
+            console.warn(`[Background] ⚠️ Some retry URLs missing from progress, adding them: ${missingUrls.join(', ')}`);
+            missingUrls.forEach(url => {
+              progress.pageResults.push({
+                url,
+                status: 'pending' as const,
+              });
+            });
+          }
+          
+          // Ensure all retry URLs are marked as pending (in case they were marked as failed)
+          progress.pageResults.forEach(pageResult => {
+            if (retryUrlsSet.has(pageResult.url) && pageResult.status !== 'pending') {
+              console.log(`[Background] 🔄 Resetting ${pageResult.url} from ${pageResult.status} to pending for retry`);
+              pageResult.status = 'pending';
+            }
+          });
+          
+          progress.totalPages = retryUrls.length;
+        } else {
+          // Normal mode: Update with discovered pages
+          progress.totalPages = actualPageCount;
+          progress.pageResults = pageUrls.slice(0, actualPageCount).map(url => ({
+            url,
+            status: 'pending' as const,
+          }));
+        }
 
         // Save updated progress - ensure it's persisted
+        const pendingCount = progress.pageResults.filter(p => p.status === 'pending').length;
+        console.log(`[Background] 📝 Progress has ${progress.pageResults.length} pages (${pendingCount} pending)...`);
+        
+        // For retry mode, verify all retry URLs are marked as pending
+        if (retryUrls && Array.isArray(retryUrls) && retryUrls.length > 0) {
+          console.log(`[Background] 🔄 Retry URLs: ${retryUrls.join(', ')}`);
+          const pendingUrls = progress.pageResults.filter(p => p.status === 'pending').map(p => p.url);
+          console.log(`[Background] 🔄 Pending pages: ${pendingUrls.join(', ')}`);
+          
+          // Verify all retry URLs are marked as pending
+          const notPending = retryUrls.filter(url => !pendingUrls.includes(url));
+          if (notPending.length > 0) {
+            console.error(`[Background] ❌ ERROR: Some retry URLs are not pending: ${notPending.join(', ')}`);
+          }
+        }
+        
         console.log(`[Background] 📝 Updating status to 'auditing'...`);
         const statusMessage = retryUrls && Array.isArray(retryUrls) && retryUrls.length > 0
           ? `Retrying ${actualPageCount} failed pages, starting audit...`

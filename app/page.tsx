@@ -146,22 +146,27 @@ function HomeContent() {
   const handleRetryFailedPages = async (urls: string[]) => {
     if (urls.length === 0) return;
     
+    // Don't clear results - we want to keep the existing job and results
+    // Just reset failed pages to pending in the existing job
+    if (!siteAuditJobId) {
+      setError('No active audit job found. Please start a new audit first.');
+      return;
+    }
+    
     setLoading(true);
     setError('');
     
     try {
-      // Create a new audit job for the failed URLs
-      // We'll audit them as a "mini" full-site audit
-      const baseUrl = urls[0]; // Use first URL as base
+      console.log(`[Retry] Retrying ${urls.length} failed pages in job: ${siteAuditJobId}`);
+      console.log(`[Retry] URLs:`, urls);
       
-      const response = await fetch('/api/audit/site', {
+      // Use the retry endpoint to update existing job
+      const response = await fetch('/api/audit/retry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          url: baseUrl, 
-          maxPages: urls.length, 
-          maxDepth: 1,
-          retryUrls: urls, // Pass specific URLs to retry
+          jobId: siteAuditJobId,
+          retryUrls: urls,
         }),
       });
 
@@ -171,9 +176,16 @@ function HomeContent() {
         throw new Error(data.error || 'Failed to retry failed pages');
       }
 
-      setSiteAuditJobId(data.jobId);
+      console.log(`[Retry] ✅ Retry initiated: ${data.resetCount} pages reset to pending`);
+      
+      // Clear the result to show progress again
+      setSiteAuditResult(null);
       setViewMode('overview');
+      setLoading(false);
+      
+      // Progress component will automatically start polling since siteAuditJobId is still set
     } catch (err: any) {
+      console.error(`[Retry] Error:`, err);
       setError(err.message || 'Failed to retry failed pages');
       setLoading(false);
     }

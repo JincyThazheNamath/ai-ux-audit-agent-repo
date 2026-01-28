@@ -230,10 +230,10 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
 
     // Navigate to page with aggressive timeouts to prevent hanging
     console.log(`  📄 Loading page: ${targetUrl.toString()}`);
-    // Optimized for Netlify 26s limit: reduce page load timeouts
-    // Total per page: ~8s page load + ~2s AI analysis = 10s max per page
-    const PAGE_LOAD_TIMEOUT = 8000; // 8 seconds max for page load (optimized for Netlify)
-    const DOM_CONTENT_TIMEOUT = 6000; // 6 seconds for domcontentloaded fallback
+    // Optimized for Netlify 26s limit with increased timeout
+    // Total per page: ~12s page load + ~5s AI analysis = 17s max per page
+    const PAGE_LOAD_TIMEOUT = 12000; // 12 seconds max for page load (increased for better success rate)
+    const DOM_CONTENT_TIMEOUT = 10000; // 10 seconds for domcontentloaded fallback
 
     try {
       // Use AbortController to ensure we can cancel if needed
@@ -458,9 +458,9 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
 
     let message: any = null;
     const rateLimiter = getRateLimiter();
-    // Optimized for Netlify 26s limit: reduce AI analysis timeout
-    // Page load: ~8s max, AI analysis: ~2s max = 10s total per page
-    const AI_ANALYSIS_TIMEOUT = 20000; // 20 seconds max for AI analysis (reduced from 30s)
+    // Optimized for Netlify 26s limit with increased timeout
+    // Page load: ~12s max, AI analysis: ~5s max = 17s total per page
+    const AI_ANALYSIS_TIMEOUT = 25000; // 25 seconds max for AI analysis (increased for better success rate)
 
     for (const modelName of modelNames) {
       try {

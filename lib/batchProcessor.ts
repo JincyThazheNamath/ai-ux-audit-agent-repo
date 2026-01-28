@@ -23,11 +23,11 @@ export interface BatchConfig {
 }
 
 const DEFAULT_CONFIG: BatchConfig = {
-  batchSize: 2, // Optimized for Netlify 26s limit: 2 pages × 10s = 20s max
+  batchSize: 1, // Reduced to 1 page per batch to allow 20s timeout per page (fits in 26s Netlify limit)
   delayBetweenBatches: 0, // No delay needed for small batches
   delayBetweenRequests: 500, // Reduced to 500ms for faster processing
   maxRetries: 1, // Single retry to fail fast and stay within timeout
-  timeoutPerPage: 10000, // 10 seconds per page (optimized for Netlify 26s limit)
+  timeoutPerPage: 20000, // Increased to 20 seconds per page for better success rate
 };
 
 /**

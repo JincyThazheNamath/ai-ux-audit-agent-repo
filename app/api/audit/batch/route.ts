@@ -45,10 +45,10 @@ export async function POST(request: NextRequest) {
         }
 
         // 3. Define Batch Size - OPTIMIZED for Netlify 26s limit
-        // Process only 2 pages per batch to ensure we finish well within 26s
-        // Each page: ~8-10s max (page load + AI analysis + DB save)
-        // 2 pages × 10s = 20s max, leaving 6s buffer for overhead
-        const BATCH_SIZE = 2; // Reduced from 4 to fit safely in 26s Netlify limit
+        // Process only 1 page per batch to allow 20s timeout per page
+        // Each page: ~15-20s max (page load + AI analysis + DB save)
+        // 1 page × 20s = 20s max, leaving 6s buffer for overhead
+        const BATCH_SIZE = 1; // Reduced to 1 page per batch to allow 20s timeout per page
         const currentBatchUrls = pendingPages.slice(0, BATCH_SIZE);
         const totalBatches = Math.ceil(pendingPages.length / BATCH_SIZE);
         const currentBatchNumber = Math.ceil((progress.totalPages - pendingPages.length) / BATCH_SIZE) + 1;
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
                 delayBetweenBatches: 0, // No delay needed - we're processing one small batch
                 delayBetweenRequests: 500, // Reduced from 1000ms to 500ms for faster processing
                 maxRetries: 1, // Single retry to fail fast
-                timeoutPerPage: 10000 // Reduced from 30s to 10s per page (8s page load + 2s AI analysis)
+                timeoutPerPage: 20000 // Increased to 20s per page for better success rate
             });
         } catch (err: any) {
             console.error(`[Batch] ⚠️ Batch processing error: ${err.message}`);
