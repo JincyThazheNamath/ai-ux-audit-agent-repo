@@ -354,6 +354,48 @@ export async function processBatches(
       for (let index = 0; index < batch.length; index++) {
         const pageUrl = batch[index];
 
+        // CRITICAL: Check if page is still pending before processing
+        // This prevents re-auditing completed pages
+        try {
+          const { getProgress } = await import('./progressTracker');
+          const currentProgress = await getProgress(jobId);
+          if (currentProgress) {
+            const pageStatus = currentProgress.pageResults.find(p => p.url === pageUrl)?.status;
+            
+            if (pageStatus === 'completed') {
+              console.log(`[processBatches] ⏭️ Skipping ${pageUrl} - already completed`);
+              // Add to successful results if we have the result
+              try {
+                const { getPageResult } = await import('./progressTracker');
+                const existingResult = await getPageResult(jobId, pageUrl);
+                if (existingResult) {
+                  successful.push(existingResult);
+                  console.log(`[processBatches] ✅ Added existing result for ${pageUrl}`);
+                }
+              } catch (e) {
+                console.warn(`[processBatches] ⚠️ Could not retrieve existing result for ${pageUrl}`);
+              }
+              continue; // Skip this page
+            }
+            
+            if (pageStatus === 'failed') {
+              console.log(`[processBatches] ⏭️ Skipping ${pageUrl} - already marked as failed`);
+              continue; // Skip this page (unless it's a retry, but that's handled by the retry endpoint)
+            }
+            
+            if (pageStatus !== 'pending' && pageStatus !== 'processing') {
+              console.log(`[processBatches] ⏭️ Skipping ${pageUrl} - status is ${pageStatus}`);
+              continue; // Skip pages that aren't pending or processing
+            }
+            
+            // Only process if status is 'pending' or 'processing'
+            console.log(`[processBatches] ✅ Page ${pageUrl} is ${pageStatus}, proceeding with audit`);
+          }
+        } catch (statusCheckError: any) {
+          console.error(`[processBatches] ⚠️ Failed to check page status for ${pageUrl}: ${statusCheckError.message}`);
+          // Continue anyway - better to try than skip
+        }
+
         // Add delay between requests (except first)
         if (index > 0) {
           await delay(config.delayBetweenRequests);
