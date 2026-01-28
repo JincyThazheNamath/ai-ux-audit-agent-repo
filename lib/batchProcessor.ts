@@ -479,6 +479,15 @@ export async function processBatches(
         }
       }
 
+      // Log batch duration after each batch completes
+      const batchDuration = Date.now() - batchStartTime;
+      console.log(`[processBatches] ⏱️ Batch ${batchNumber}/${batches.length} duration: ${batchDuration}ms`);
+      
+      // Log warning if batch took too long (close to Netlify 26s limit)
+      if (batchDuration > 24000) {
+        console.warn(`[processBatches] ⚠️ WARNING: Batch took ${batchDuration}ms - very close to Netlify 26s limit!`);
+      }
+
       // Delay between batches
       if (i < batches.length - 1) {
         await delay(config.delayBetweenBatches);
@@ -495,14 +504,6 @@ export async function processBatches(
       } catch (e) {
         console.error(`[processBatches] ⚠️ Error closing shared browser:`, e);
       }
-    }
-
-    const batchDuration = Date.now() - batchStartTime;
-    console.log(`[processBatches] ⏱️ Batch ${batchNumber}/${batches.length} duration: ${batchDuration}ms`);
-    
-    // Log warning if batch took too long (close to Netlify 26s limit)
-    if (batchDuration > 24000) {
-      console.warn(`[processBatches] ⚠️ WARNING: Batch took ${batchDuration}ms - very close to Netlify 26s limit!`);
     }
     
     const totalDuration = Date.now() - overallStartTime;
