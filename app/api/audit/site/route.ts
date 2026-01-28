@@ -132,14 +132,14 @@ export async function POST(request: NextRequest) {
           await updateStatus(jobId, 'discovering', 'Starting page discovery...');
         }
 
-        // Add timeout for discovery (70 seconds max)
+        // Add timeout for discovery (60 seconds max)
         const discoveryPromise = discoverPagesWithDepth(targetUrl.toString(), {
           maxPages,
           maxDepth,
         });
 
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Discovery timeout: Page discovery took longer than 70 seconds')), 70000) // 70s (was 60s)
+          setTimeout(() => reject(new Error('Discovery timeout: Page discovery took longer than 60 seconds')), 60000)
         );
 
         let discoveredPages: Awaited<ReturnType<typeof discoverPagesWithDepth>>;

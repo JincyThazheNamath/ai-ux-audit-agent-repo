@@ -51,9 +51,9 @@ export async function POST(request: NextRequest) {
             await processBatches(currentBatchUrls, jobId, {
                 batchSize: BATCH_SIZE,
                 delayBetweenBatches: 0,
-                delayBetweenRequests: 11000, // 11 seconds (was 1 second)
+                delayBetweenRequests: 1000,
                 maxRetries: 1,
-                timeoutPerPage: 40000 // 40 seconds (was 30 seconds)
+                timeoutPerPage: 30000
             });
         } catch (err: any) {
             console.error(`[Batch] ⚠️ Batch processing error: ${err.message}`);
