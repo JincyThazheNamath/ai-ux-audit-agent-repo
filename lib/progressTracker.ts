@@ -583,6 +583,9 @@ export async function updatePageProgress(
   }
 
   progressStore.set(jobId, progress);
+  
+  // CRITICAL: Save to KV to persist 'processing' status for progress API
+  await saveProgressToKv(jobId, progress);
 }
 
 /**

@@ -163,11 +163,10 @@ async function auditSinglePageWithRetry(
       console.log(`[auditSinglePageWithRetry] Attempt ${attempt}/${config.maxRetries} for ${url}`);
 
       try {
-        // Update progress to processing
-        console.log(`[auditSinglePageWithRetry] Updating progress to 'processing'...`);
-        await updatePageProgress(jobId, url, 'processing');
+        // Note: Status is already set to 'processing' in processBatches before calling this function
+        // Only update status message here
         await updateStatus(jobId, 'auditing', url);
-        console.log(`[auditSinglePageWithRetry] ✅ Progress updated`);
+        console.log(`[auditSinglePageWithRetry] ✅ Status updated`);
 
         // Create timeout promise
         const timeoutPromise = new Promise<AuditResult>((_, reject) =>
@@ -399,6 +398,16 @@ export async function processBatches(
 
         console.log(`[processBatches] 🔍 Starting audit for page ${index + 1}/${batch.length}: ${pageUrl}`);
         const pageStartTime = Date.now();
+
+        // CRITICAL: Set page status to 'processing' BEFORE starting audit
+        // This ensures the UI shows the green loading indicator immediately
+        try {
+          await updatePageProgress(jobId, pageUrl, 'processing');
+          console.log(`[processBatches] ✅ Set ${pageUrl} to 'processing' status`);
+        } catch (statusUpdateError: any) {
+          console.error(`[processBatches] ⚠️ Failed to set processing status for ${pageUrl}: ${statusUpdateError.message}`);
+          // Continue anyway - don't block audit
+        }
 
         // WATCHDOG Timer
         let pageAuditCompleted = false;

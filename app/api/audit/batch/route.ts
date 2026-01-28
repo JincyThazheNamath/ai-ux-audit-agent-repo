@@ -59,20 +59,28 @@ export async function POST(request: NextRequest) {
         // 1 page × 20s = 20s max, leaving 6s buffer for overhead
         const BATCH_SIZE = 1; // Reduced to 1 page per batch to allow 20s timeout per page
         
+        // CRITICAL: Re-fetch progress right before creating batches
+        // This ensures we have the latest status and don't include pages that just completed
+        const freshProgress = await getProgress(jobId);
+        if (!freshProgress) {
+            return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+        }
+        
         // Double-check that pages are still pending before processing
         // This prevents re-auditing completed pages
-        const verifiedPendingPages = pendingPages.filter(url => {
-          const pageStatus = progress.pageResults.find(p => p.url === url)?.status;
-          if (pageStatus !== 'pending') {
-            console.log(`[Batch] ⚠️ Skipping ${url} - status is ${pageStatus}, not pending`);
-            return false;
-          }
-          return true;
-        });
+        const verifiedPendingPages = freshProgress.pageResults
+            .filter(p => {
+                if (p.status !== 'pending') {
+                    console.log(`[Batch] ⚠️ Skipping ${p.url} - status is ${p.status}, not pending`);
+                    return false;
+                }
+                return true;
+            })
+            .map(p => p.url);
 
         if (verifiedPendingPages.length === 0) {
-          console.log(`[Batch] ✅ No verified pending pages after filtering. Job completed.`);
-          if (progress.status !== 'completed') {
+          console.log(`[Batch] ✅ No verified pending pages after re-check. Job completed.`);
+          if (freshProgress.status !== 'completed') {
             await updateStatus(jobId, 'completed');
           }
           return NextResponse.json({ status: 'completed', message: 'All pages processed' });
@@ -80,7 +88,7 @@ export async function POST(request: NextRequest) {
         
         const currentBatchUrls = verifiedPendingPages.slice(0, BATCH_SIZE);
         const totalBatches = Math.ceil(verifiedPendingPages.length / BATCH_SIZE);
-        const currentBatchNumber = Math.ceil((progress.totalPages - verifiedPendingPages.length) / BATCH_SIZE) + 1;
+        const currentBatchNumber = Math.ceil((freshProgress.totalPages - verifiedPendingPages.length) / BATCH_SIZE) + 1;
 
         console.log(`[Batch] 📦 Batch ${currentBatchNumber}/${totalBatches}: Processing ${currentBatchUrls.length} pages`);
         console.log(`[Batch]    URLs: ${currentBatchUrls.join(', ')}`);
@@ -107,11 +115,26 @@ export async function POST(request: NextRequest) {
 
         // 5. Re-check progress to get accurate remaining count
         const updatedProgress = await getProgress(jobId);
-        const remainingPendingPages = updatedProgress 
-            ? updatedProgress.pageResults
-                .filter(p => p.status === 'pending')
-                .map(p => p.url)
-            : [];
+        if (!updatedProgress) {
+            console.error(`[Batch] ❌ Could not get updated progress after batch processing`);
+            return NextResponse.json({ error: 'Failed to get updated progress' }, { status: 500 });
+        }
+        
+        // CRITICAL: Re-verify pending pages after batch processing
+        // This ensures we don't include pages that were just completed
+        const remainingPendingPages = updatedProgress.pageResults
+            .filter(p => {
+                const status = p.status;
+                if (status !== 'pending') {
+                    console.log(`[Batch] ⚠️ Excluding ${p.url} from next batch - status is ${status}`);
+                    return false;
+                }
+                return true;
+            })
+            .map(p => p.url);
+
+        console.log(`[Batch] 📊 After batch processing: ${remainingPendingPages.length} pages still pending`);
+        console.log(`[Batch]    Completed: ${updatedProgress.completedPages}/${updatedProgress.totalPages}`);
 
         // 6. Recursive Call or Finalization
         if (remainingPendingPages.length > 0) {
