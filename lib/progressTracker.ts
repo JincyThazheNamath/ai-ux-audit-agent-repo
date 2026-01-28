@@ -585,7 +585,28 @@ export async function updatePageProgress(
   progressStore.set(jobId, progress);
   
   // CRITICAL: Save to KV to persist 'processing' status for progress API
+  console.log(`💾 Saving page progress update: ${pageUrl} -> ${status}`);
+  console.log(`   JobId: ${jobId}`);
+  console.log(`   Page index: ${pageIndex >= 0 ? pageIndex : 'new page'}`);
   await saveProgressToKv(jobId, progress);
+  
+  // Verify the save was successful
+  if (useKv && kv) {
+    try {
+      const verifyKey = `audit:progress:${jobId}`;
+      const verifyData = await kv.get(verifyKey) as string | null;
+      if (verifyData) {
+        const verifyProgress = JSON.parse(verifyData) as AuditProgress;
+        const verifyPageStatus = verifyProgress.pageResults.find(p => p.url === pageUrl)?.status;
+        console.log(`✅ Verified save: ${pageUrl} status in ${useNeon ? 'Neon' : 'KV'} is: ${verifyPageStatus}`);
+        if (verifyPageStatus !== status) {
+          console.error(`❌ STATUS MISMATCH: Expected ${status}, but found ${verifyPageStatus}`);
+        }
+      }
+    } catch (verifyError: any) {
+      console.warn(`⚠️ Failed to verify save: ${verifyError.message}`);
+    }
+  }
 }
 
 /**
@@ -838,38 +859,49 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
   console.log(`🔍 Progress store size: ${progressStore.size}`);
   console.log(`🔍 All jobIds in store: ${Array.from(progressStore.keys()).join(', ')}`);
 
-  // Try in-memory first
-  let progress = progressStore.get(cleanJobId);
+  // CRITICAL FIX: In production/serverless (Netlify), always fetch from Neon/KV first
+  // Memory cache is empty across function invocations in serverless environments
+  const isProduction = process.env.NETLIFY === 'true' || process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+  
+  let progress: AuditProgress | null = null;
 
-  // If not found and KV is available, try KV
-  if (!progress && useKv && kv) {
+  // Always check KV/Neon first in production, or if KV is available
+  if (useKv && kv) {
     try {
-      console.log(`🔍 Checking KV for jobId: ${cleanJobId}`);
+      console.log(`🔍 Checking ${useNeon ? 'Neon' : 'KV'} for jobId: ${cleanJobId}`);
       const kvKey = `audit:progress:${cleanJobId}`;
       console.log(`   KV key: ${kvKey}`);
       const kvData = await kv.get(kvKey) as string | null;
       if (kvData) {
-        console.log(`✅ Found progress in KV: ${cleanJobId}`);
-        console.log(`   KV data length: ${kvData.length} bytes`);
-        const kvProgress = JSON.parse(kvData);
-        // Also store in memory for faster subsequent access
+        console.log(`✅ Found progress in ${useNeon ? 'Neon' : 'KV'}: ${cleanJobId}`);
+        console.log(`   Data length: ${kvData.length} bytes`);
+        const kvProgress = JSON.parse(kvData) as AuditProgress;
+        // Update memory cache with fresh data
         progressStore.set(cleanJobId, kvProgress);
         progress = kvProgress;
       } else {
-        console.log(`❌ No data found in KV for key: ${kvKey}`);
+        console.log(`❌ No data found in ${useNeon ? 'Neon' : 'KV'} for key: ${kvKey}`);
         // Try to list all keys to see what's available
         try {
           const allKeys = await kv.keys('audit:*') as string[];
-          console.log(`   Available KV keys (${allKeys.length}):`, allKeys.slice(0, 10));
+          console.log(`   Available keys (${allKeys.length}):`, allKeys.slice(0, 10));
         } catch (listError: any) {
-          console.error('   Failed to list KV keys:', listError.message);
+          console.error('   Failed to list keys:', listError.message);
         }
       }
     } catch (kvError: any) {
-      console.error('❌ Failed to get from KV:', kvError.message);
+      console.error(`❌ Failed to get from ${useNeon ? 'Neon' : 'KV'}:`, kvError.message);
       console.error('   Error code:', kvError.code);
       console.error('   Error name:', kvError.name);
       console.error('   Error stack:', kvError.stack);
+    }
+  }
+
+  // Fallback to memory only in dev mode (not production)
+  if (!progress && !isProduction) {
+    progress = progressStore.get(cleanJobId);
+    if (progress) {
+      console.log(`✅ Found progress in memory: ${cleanJobId}`);
     }
   }
 
@@ -877,10 +909,13 @@ export async function getProgress(jobId: string): Promise<AuditProgress | null> 
     console.log(`❌ Progress not found for jobId: ${cleanJobId}`);
     console.log(`   Available jobIds: ${Array.from(progressStore.keys()).join(', ')}`);
     console.log(`   JobId match check: ${Array.from(progressStore.keys()).map(k => `"${k}" === "${cleanJobId}": ${k === cleanJobId}`).join(', ')}`);
-  } else {
-    console.log(`✅ Found progress for jobId: ${cleanJobId}, status: ${progress.status}`);
+    return null;
   }
-  return progress || null;
+  
+  console.log(`✅ Found progress for jobId: ${cleanJobId}, status: ${progress.status}`);
+  console.log(`   Page results: ${progress.pageResults.length} pages`);
+  console.log(`   Statuses: ${progress.pageResults.map(p => `${p.url}:${p.status}`).join(', ')}`);
+  return progress;
 }
 
 /**
