@@ -11,6 +11,7 @@ export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
     const functionStartTime = Date.now();
+    let jobId: string | undefined; // Declare at function scope for error recovery
     try {
         // Validate request body
         let requestBody;
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
         }
         
-        const { jobId } = requestBody;
+        jobId = requestBody?.jobId;
         if (!jobId || typeof jobId !== 'string') {
             console.error(`[Batch] ❌ Missing or invalid jobId in request`);
             return NextResponse.json({ error: 'Job ID is required' }, { status: 400 });
@@ -316,42 +317,46 @@ export async function POST(request: NextRequest) {
         
         // CRITICAL: Even on critical error, try to trigger next batch if possible
         // This ensures processing continues even if this function fails
-        try {
-            const errorProgress = await getProgress(jobId);
-            if (errorProgress) {
-                const errorPendingPages = errorProgress.pageResults
-                    .filter(p => p.status !== 'completed' && p.status !== 'failed')
-                    .map(p => p.url);
-                
-                if (errorPendingPages.length > 0) {
-                    console.log(`[Batch] 🔄 Attempting to trigger next batch despite error (${errorPendingPages.length} pages remaining)...`);
-                    const origin = new URL(request.url).origin;
-                    const nextBatchUrl = `${origin}/api/audit/batch`;
+        if (jobId) {
+            try {
+                const errorProgress = await getProgress(jobId);
+                if (errorProgress) {
+                    const errorPendingPages = errorProgress.pageResults
+                        .filter(p => p.status !== 'completed' && p.status !== 'failed')
+                        .map(p => p.url);
                     
-                    // Non-blocking trigger - don't await
-                    setTimeout(async () => {
-                        try {
-                            await fetch(nextBatchUrl, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ jobId })
-                            });
-                            console.log(`[Batch] ✅ Error recovery: Next batch triggered successfully`);
-                        } catch (recoveryError: any) {
-                            console.error(`[Batch] ❌ Error recovery trigger failed: ${recoveryError.message}`);
-                        }
-                    }, 1000);
+                    if (errorPendingPages.length > 0) {
+                        console.log(`[Batch] 🔄 Attempting to trigger next batch despite error (${errorPendingPages.length} pages remaining)...`);
+                        const origin = new URL(request.url).origin;
+                        const nextBatchUrl = `${origin}/api/audit/batch`;
+                        
+                        // Non-blocking trigger - don't await
+                        setTimeout(async () => {
+                            try {
+                                await fetch(nextBatchUrl, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ jobId })
+                                });
+                                console.log(`[Batch] ✅ Error recovery: Next batch triggered successfully`);
+                            } catch (recoveryError: any) {
+                                console.error(`[Batch] ❌ Error recovery trigger failed: ${recoveryError.message}`);
+                            }
+                        }, 1000);
+                    }
                 }
+            } catch (recoveryCheckError: any) {
+                console.error(`[Batch] ⚠️ Could not attempt error recovery: ${recoveryCheckError.message}`);
             }
-        } catch (recoveryCheckError: any) {
-            console.error(`[Batch] ⚠️ Could not attempt error recovery: ${recoveryCheckError.message}`);
+        } else {
+            console.error(`[Batch] ⚠️ Cannot attempt error recovery - jobId not available`);
         }
         
         // Return error but don't prevent continuation
         return NextResponse.json({ 
             error: error.message,
             message: 'Batch processing encountered an error, but will attempt to continue processing remaining pages.',
-            jobId 
+            ...(jobId && { jobId })
         }, { status: 500 });
     }
 }
