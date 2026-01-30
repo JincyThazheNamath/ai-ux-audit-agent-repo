@@ -112,9 +112,12 @@ function HomeContent() {
         }
 
         setSiteAuditJobId(data.jobId);
+        // Keep loading true - SiteAuditProgress component will handle the loading state
+        // setLoading(false) will be called by handleSiteAuditComplete or handleSiteAuditError
       } catch (err: any) {
         setError(err.message || 'Failed to start full-site audit');
         setLoading(false);
+        setSiteAuditJobId(null);
       }
     }
   };
@@ -358,9 +361,17 @@ Report ID: ${result.timestamp}
             </button>
           </div>
           {error && (
-            <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-lg flex items-center gap-2 text-red-300">
-              <AlertCircle size={20} />
-              <span>{error}</span>
+            <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-lg flex items-start gap-2 text-red-300">
+              <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <span className="font-semibold">Error:</span>
+                <span className="ml-2">{error}</span>
+                {error.includes('taking longer than expected') && (
+                  <p className="text-sm text-red-200 mt-2">
+                    The audit is still processing in the background. You can keep this page open and check back in a few minutes, or start a new audit with fewer pages.
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>

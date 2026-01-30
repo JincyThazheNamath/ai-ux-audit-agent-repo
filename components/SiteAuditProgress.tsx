@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Loader2, CheckCircle2, XCircle, Clock } from 'lucide-react';
 
 interface ProgressData {
@@ -28,9 +28,17 @@ interface SiteAuditProgressProps {
 export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAuditProgressProps) {
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [finalResultRetryCount, setFinalResultRetryCount] = useState(0);
   const [startTime] = useState(Date.now());
+  const lastCompletedRef = useRef<number>(0);
+  const lastProgressTimeRef = useRef<number>(Date.now());
+  const resumeTriggeredRef = useRef<boolean>(false);
+  const progressCheckFailureCount = useRef<number>(0);
   const MAX_RETRIES = 10; // Max retries for 404 errors
-  const MAX_WAIT_TIME = 10 * 60 * 1000; // 10 minutes max wait time (extended for 40 pages)
+  const MAX_PROGRESS_CHECK_FAILURES = 8; // Only show error after 8 consecutive progress check failures (~12s)
+  const MAX_FINAL_RESULT_RETRIES = 30; // Max retries for missing finalResult (30 * 1.5s = 45s)
+  const MAX_WAIT_TIME = 15 * 60 * 1000; // 15 minutes max wait time (increased for 40 pages with sequential processing)
+  const STUCK_THRESHOLD_MS = 45000; // If no progress for 45s, trigger batch to resume chain
 
   useEffect(() => {
     if (!jobId) return;
@@ -40,17 +48,26 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
         // Check if we've exceeded max wait time
         const elapsed = Date.now() - startTime;
         if (elapsed > MAX_WAIT_TIME) {
-          onError('Audit is taking longer than expected (10 minutes). The audit may still be processing. Please wait a bit longer or try again with fewer pages.');
+          const elapsedMinutes = Math.floor(elapsed / 60000);
+          onError(`Audit is taking longer than expected (${elapsedMinutes} minutes). The audit may still be processing. For 40 pages, this can take up to 15 minutes. Please wait a bit longer or check the progress below.`);
           return;
         }
 
         const url = `/api/audit/progress/${jobId}`;
+        
+        // Increased timeout for progress API calls (30s for Netlify, handles slow Redis queries)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort('Progress poll timeout after 30s'), 30000);
+        
         const response = await fetch(url, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
           },
+          signal: controller.signal,
         });
+        
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
@@ -77,27 +94,83 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
 
         const data = await response.json();
         
-        // Reset retry count on successful fetch
+        // Reset retry counts on successful fetch
         setRetryCount(0);
+        progressCheckFailureCount.current = 0;
         setProgress(data);
+
+        // Backup: if auditing and no progress for 45s, trigger batch once to resume chain
+        if (data.status === 'auditing' && data.pageResults?.length) {
+          const completed = data.completedPages ?? 0;
+          const pending = data.pageResults.filter((p: { status: string }) => p.status === 'pending' || p.status === 'processing').length;
+          const now = Date.now();
+          if (completed !== lastCompletedRef.current) {
+            lastCompletedRef.current = completed;
+            lastProgressTimeRef.current = now;
+            resumeTriggeredRef.current = false;
+          } else if (pending > 0 && (now - lastProgressTimeRef.current) > STUCK_THRESHOLD_MS && !resumeTriggeredRef.current) {
+            resumeTriggeredRef.current = true;
+            console.log(`[Progress] No progress for ${(now - lastProgressTimeRef.current) / 1000}s, triggering batch to resume (${pending} pending)`);
+            fetch('/api/audit/batch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jobId })
+            }).then((r) => console.log(`[Progress] Resume trigger: ${r.ok ? 'ok' : r.status}`)).catch((e) => console.error('[Progress] Resume trigger failed:', e));
+          }
+        }
 
         if (data.status === 'completed') {
           if (data.finalResult) {
+            // Reset final result retry count on success
+            setFinalResultRetryCount(0);
             onComplete(data.finalResult);
           } else {
-            console.warn('Audit completed but no final result available');
-            onError('Audit completed but results are missing. Please try again.');
+            // Audit is completed but finalResult is not yet available
+            // This can happen if aggregation is still in progress
+            const newFinalResultRetryCount = finalResultRetryCount + 1;
+            setFinalResultRetryCount(newFinalResultRetryCount);
+            
+            console.warn(`Audit completed but no final result available (retry ${newFinalResultRetryCount}/${MAX_FINAL_RESULT_RETRIES})`);
+            
+            if (newFinalResultRetryCount >= MAX_FINAL_RESULT_RETRIES) {
+              // After many retries, show error but with helpful message
+              console.error('Final result not available after multiple retries');
+              onError('Audit completed but results are still being aggregated. This may take a few more seconds. Please wait a moment and refresh, or try again.');
+            } else {
+              // Continue polling - final result might be available on next poll
+              console.log(`Waiting for final result... (${newFinalResultRetryCount}/${MAX_FINAL_RESULT_RETRIES})`);
+            }
           }
         } else if (data.status === 'failed') {
           const errorMessage = data.finalResult?.error || 'Audit failed. Please try again.';
           onError(errorMessage);
+        } else {
+          // Reset final result retry count when status changes (not completed)
+          setFinalResultRetryCount(0);
         }
       } catch (error: any) {
-        console.error('Progress poll error:', error);
-        
-        // Only call onError for non-retryable errors
-        if (!error.message?.includes('404') && !error.message?.includes('not found')) {
-          onError(error.message || 'Failed to check progress');
+        const msg = error?.message ?? '';
+        // Don't show abort/timeout as user error - poll will retry
+        const isAbortOrTimeout = msg.includes('abort') || msg.includes('aborted') || msg.includes('timeout') || msg.includes('without reason') || error?.name === 'AbortError';
+        if (isAbortOrTimeout) {
+          console.warn('Progress poll aborted or timed out, will retry:', msg);
+          return;
+        }
+        // If audit already shows all pages done, don't overwrite with an error
+        if (progress && progress.completedPages >= progress.totalPages && progress.totalPages > 0) {
+          console.warn('Poll error after completion, ignoring:', msg);
+          progressCheckFailureCount.current = 0;
+          return;
+        }
+        // Transient progress check failures (network, 500) - retry before showing error
+        if (!msg.includes('404') && !msg.includes('not found')) {
+          progressCheckFailureCount.current = (progressCheckFailureCount.current || 0) + 1;
+          if (progressCheckFailureCount.current >= MAX_PROGRESS_CHECK_FAILURES) {
+            onError(msg || 'Failed to check progress. The audit may still be running—please wait or try again.');
+            progressCheckFailureCount.current = 0;
+          } else {
+            console.warn(`Progress check failed (${progressCheckFailureCount.current}/${MAX_PROGRESS_CHECK_FAILURES}), retrying:`, msg);
+          }
         }
       }
     };
@@ -114,7 +187,7 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
       clearTimeout(initialTimeout);
       clearInterval(interval);
     };
-  }, [jobId, onComplete, onError, retryCount, startTime]);
+  }, [jobId, onComplete, onError, retryCount, finalResultRetryCount, startTime]);
 
   if (!progress) {
     return (
@@ -122,12 +195,15 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
         <div className="flex items-center gap-3 text-gray-300">
           <Loader2 className="animate-spin" size={24} />
           <div className="flex-1">
-            <span>Initializing audit...</span>
+            <span className="text-lg font-semibold">Initializing audit...</span>
             {retryCount > 0 && (
               <p className="text-sm text-gray-400 mt-1">
                 Waiting for job to start... (attempt {retryCount}/{MAX_RETRIES})
               </p>
             )}
+            <p className="text-sm text-gray-400 mt-2">
+              Please wait while we discover and prepare pages for auditing. This may take a few seconds.
+            </p>
           </div>
         </div>
       </div>
@@ -151,8 +227,7 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
         return 'Discovering pages...';
       case 'auditing':
         const remaining = progress.totalPages - progress.completedPages;
-        const estimatedBatches = Math.ceil(remaining / 2); // Assuming 2 pages per batch
-        return `Auditing pages... (${progress.completedPages}/${progress.totalPages} completed, ~${estimatedBatches} batches remaining)`;
+        return `Auditing pages... (${progress.completedPages}/${progress.totalPages} completed, ${remaining} page${remaining !== 1 ? 's' : ''} remaining)`;
       case 'aggregating':
         return 'Aggregating results...';
       case 'completed':
@@ -221,52 +296,61 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
           </div>
         </div>
         
-        {/* Batch Progress Indicator */}
-        {progress.status === 'auditing' && progress.totalPages > 2 && (
+        {/* Processing Info */}
+        {progress.status === 'auditing' && (
           <div className="bg-[#0a1628] rounded-lg p-3 border border-teal-500/20">
             <div className="flex items-center gap-2 text-sm">
               <Loader2 className="animate-spin text-teal-500" size={16} />
               <span className="text-gray-300">
-                Processing in batches of 2 pages (optimized for speed)
+                Processing one page at a time (sequential processing)
               </span>
             </div>
             <div className="mt-2 text-xs text-gray-400">
-              Each batch completes in ~15-20 seconds
+              Each page takes ~20 seconds. Estimated total time: ~{Math.ceil((progress.totalPages - progress.completedPages) * 20 / 60)} minutes
             </div>
+            {progress.currentPage && (
+              <div className="mt-2 text-xs text-teal-400">
+                Currently auditing: {progress.currentPage}
+              </div>
+            )}
           </div>
         )}
 
         {/* Page List */}
         {progress.pageResults.length > 0 && (
           <div className="space-y-2">
-            <h4 className="text-sm font-semibold text-gray-300">Page Status</h4>
-            <div className="max-h-48 overflow-y-auto space-y-1">
-              {progress.pageResults.slice(0, 10).map((page, index) => (
+            <h4 className="text-sm font-semibold text-gray-300">
+              Page Status ({progress.pageResults.length} total)
+            </h4>
+            <div className="max-h-64 overflow-y-auto space-y-1">
+              {progress.pageResults.slice(0, 20).map((page, index) => {
+                // Already audited = completed status OR has a score (successful audit) → green check
+                const hasScore = page.score !== undefined && page.score !== null;
+                const isCompleted = page.status === 'completed' || hasScore;
+                const isFailed = page.status === 'failed' && !hasScore;
+                return (
                 <div
                   key={index}
                   className="flex items-center gap-2 text-xs bg-[#0a1628] rounded p-2"
                 >
-                  {page.status === 'completed' && (
-                    <CheckCircle2 className="text-green-500 flex-shrink-0" size={14} />
-                  )}
-                  {page.status === 'processing' && (
-                    <Loader2 className="animate-spin text-teal-500 flex-shrink-0" size={14} />
-                  )}
-                  {page.status === 'pending' && (
-                    <div className="w-3 h-3 rounded-full bg-gray-600 flex-shrink-0" />
-                  )}
-                  {page.status === 'failed' && (
-                    <XCircle className="text-red-500 flex-shrink-0" size={14} />
+                  {isCompleted ? (
+                    <CheckCircle2 className="text-green-500 flex-shrink-0" size={14} aria-label="Completed" />
+                  ) : isFailed ? (
+                    <XCircle className="text-red-500 flex-shrink-0" size={14} aria-label="Failed" />
+                  ) : page.status === 'processing' ? (
+                    <Loader2 className="animate-spin text-teal-500 flex-shrink-0" size={14} aria-label="Processing" />
+                  ) : (
+                    <div className="w-3 h-3 rounded-full bg-gray-600 flex-shrink-0" aria-label="Pending" />
                   )}
                   <span className="text-gray-400 truncate flex-1">{page.url}</span>
-                  {page.score !== undefined && (
+                  {hasScore && (
                     <span className="text-teal-500 font-medium">{page.score}</span>
                   )}
                 </div>
-              ))}
-              {progress.pageResults.length > 10 && (
+              );})}
+              {progress.pageResults.length > 20 && (
                 <div className="text-xs text-gray-500 text-center py-2">
-                  +{progress.pageResults.length - 10} more pages
+                  +{progress.pageResults.length - 20} more pages
                 </div>
               )}
             </div>

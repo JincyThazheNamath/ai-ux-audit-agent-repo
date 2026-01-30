@@ -129,9 +129,9 @@ export async function parseSitemap(sitemapUrl: string): Promise<string[]> {
   const urls: string[] = [];
   
   try {
-    // Add timeout for sitemap fetch (5 seconds)
+    // Add timeout for sitemap fetch (15 seconds - increased for slow sitemap servers)
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort('Sitemap fetch timeout'), 15000);
     
     const response = await fetch(sitemapUrl, {
       headers: {
@@ -160,7 +160,7 @@ export async function parseSitemap(sitemapUrl: string): Promise<string[]> {
     return urls;
   } catch (error: any) {
     if (error?.name === 'AbortError') {
-      console.error('Sitemap fetch timeout (5s limit)');
+      console.error('Sitemap fetch timeout (15s limit)');
     } else {
       console.error('Error parsing sitemap:', error);
     }
@@ -182,9 +182,9 @@ export async function findSitemap(baseUrl: string): Promise<string | null> {
   for (const path of commonSitemapPaths) {
     try {
       const sitemapUrl = `${baseUrlObj.protocol}//${baseUrlObj.host}${path}`;
-      // Add timeout for sitemap check (3 seconds)
+      // Add timeout for sitemap check (10 seconds - increased for slow servers)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const timeoutId = setTimeout(() => controller.abort('Sitemap check timeout'), 10000);
       
       try {
         const response = await fetch(sitemapUrl, {
@@ -223,9 +223,9 @@ async function crawlPageWithDepth(
   options: CrawlOptions
 ): Promise<{ links: string[], title?: string }> {
   try {
-    // Add timeout for fetch (10 seconds per page)
+    // Add timeout for fetch (20 seconds per page - increased for slow pages)
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort('Page fetch timeout'), 20000);
     
     try {
       const response = await fetch(pageUrl, {

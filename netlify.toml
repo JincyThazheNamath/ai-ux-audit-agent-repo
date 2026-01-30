@@ -36,6 +36,9 @@
 [functions."app/api/audit/route.ts"]
   timeout = 26  # Max timeout on Pro plan
 
+[functions."app/api/audit/progress/[jobId]/route.ts"]
+  timeout = 26  # Max timeout on Pro plan - allows time for Redis queries
+
 # Redirects for Next.js routing
 [[redirects]]
   from = "/*"

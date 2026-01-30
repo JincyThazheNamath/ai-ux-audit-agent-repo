@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AuditResult, AuditFinding } from '../types/audit';
 import { getRateLimiter } from './rateLimiter';
+import { CONFIG } from './config';
 
 const apiKey = process.env.ANTHROPIC_API_KEY || '';
 const anthropic = new Anthropic({ apiKey });
@@ -143,7 +144,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
   try {
     // Check if aborted before starting
     if (abortSignal?.aborted) {
-      throw new Error('Audit aborted before starting');
+      throw new Error(`Audit aborted before starting: ${abortSignal.reason || 'Signal aborted without reason'}`);
     }
 
     const targetUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
@@ -162,7 +163,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
       while (browserLaunchAttempts < maxBrowserAttempts) {
         // Check if aborted
         if (abortSignal?.aborted) {
-          throw new Error('Audit aborted during browser launch');
+          throw new Error(`Audit aborted during browser launch: ${abortSignal.reason || 'Signal aborted'}`);
         }
 
         try {
@@ -183,7 +184,8 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
 
           // Check if aborted
           if (abortSignal?.aborted) {
-            throw new Error('Audit aborted during browser launch retry');
+            const reason = abortSignal.reason || 'Signal aborted without reason';
+            throw new Error(`Audit aborted during browser launch retry: ${reason}`);
           }
 
           if (browserLaunchAttempts >= maxBrowserAttempts) {
@@ -208,7 +210,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
     // Check if aborted after browser launch
     if (abortSignal?.aborted) {
       if (isLocalBrowser) await browser.close();
-      throw new Error('Audit aborted after browser launch');
+      throw new Error(`Audit aborted after browser launch: ${abortSignal.reason || 'Signal aborted'}`);
     }
 
     console.log(`  ✅ Browser ready for page navigation`);
@@ -216,7 +218,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
     // Check if aborted before creating page
     if (abortSignal?.aborted) {
       if (isLocalBrowser) await browser.close();
-      throw new Error('Audit aborted before page creation');
+      throw new Error(`Audit aborted before page creation: ${abortSignal.reason || 'Signal aborted'}`);
     }
 
     const page = await browser.newPage();
@@ -225,7 +227,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
     // Check if aborted before navigation
     if (abortSignal?.aborted) {
       if (isLocalBrowser) await browser.close();
-      throw new Error('Audit aborted before page navigation');
+      throw new Error(`Audit aborted before page navigation: ${abortSignal.reason || 'Signal aborted'}`);
     }
 
     // Navigate to page with aggressive timeouts to prevent hanging
@@ -238,7 +240,7 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
     try {
       // Use AbortController to ensure we can cancel if needed
       const abortController = new AbortController();
-      const timeoutId = setTimeout(() => abortController.abort(), PAGE_LOAD_TIMEOUT);
+      const timeoutId = setTimeout(() => abortController.abort('Page load timeout'), PAGE_LOAD_TIMEOUT);
 
       try {
         // Try domcontentloaded first (faster, more reliable)
@@ -296,85 +298,109 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
       throw new Error(`Failed to load page: ${error.message}. Page may be slow or inaccessible.`);
     }
 
-    // Extract page data with timeout to prevent hanging
+    // Extract page data with timeout; use fallback if response data fails to load
     console.log(`  📊 Extracting page data...`);
     const DATA_EXTRACTION_TIMEOUT = 15000; // 15 seconds max for data extraction
 
-    const pageDataPromise = page.evaluate(() => {
-      const getComputedStyles = (element: Element) => {
-        const styles = window.getComputedStyle(element);
-        return {
-          color: styles.color,
-          backgroundColor: styles.backgroundColor,
-          fontSize: styles.fontSize,
-          fontWeight: styles.fontWeight,
-          fontFamily: styles.fontFamily,
+    const minimalPageDataFallback = {
+      title: '',
+      metaDescription: '',
+      url: targetUrl.toString(),
+      images: [] as { src: string; alt: string; hasAlt: boolean }[],
+      links: [] as { href: string; text: string; hasText: boolean }[],
+      headings: [] as { tag: string; text: string }[],
+      buttons: [] as { text: string; ariaLabel: string }[],
+      forms: [] as { type: string; label: string; required: boolean }[],
+      textStyles: [] as { color: string; backgroundColor: string; fontSize: string; fontWeight: string; fontFamily: string }[],
+      html: '<html><body>Page response data could not be loaded; audit based on available information.</body></html>',
+    };
+
+    let pageData: typeof minimalPageDataFallback & { images: { length: number }; links: { length: number }; headings: { length: number }; buttons: { length: number }; forms: { length: number }; html: string };
+    try {
+      const pageDataPromise = page.evaluate(() => {
+        const getComputedStyles = (element: Element) => {
+          const styles = window.getComputedStyle(element);
+          return {
+            color: styles.color,
+            backgroundColor: styles.backgroundColor,
+            fontSize: styles.fontSize,
+            fontWeight: styles.fontWeight,
+            fontFamily: styles.fontFamily,
+          };
         };
-      };
 
-      const images = Array.from(document.querySelectorAll('img')).map(img => ({
-        src: img.src,
-        alt: img.alt || '',
-        hasAlt: !!img.alt,
-      }));
+        const images = Array.from(document.querySelectorAll('img')).map(img => ({
+          src: img.src,
+          alt: img.alt || '',
+          hasAlt: !!img.alt,
+        }));
 
-      const links = Array.from(document.querySelectorAll('a')).map(link => ({
-        href: link.href,
-        text: link.textContent?.trim() || '',
-        hasText: !!(link.textContent?.trim()),
-      }));
+        const links = Array.from(document.querySelectorAll('a')).map(link => ({
+          href: link.href,
+          text: link.textContent?.trim() || '',
+          hasText: !!(link.textContent?.trim()),
+        }));
 
-      const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(h => ({
-        tag: h.tagName.toLowerCase(),
-        text: h.textContent?.trim() || '',
-      }));
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(h => ({
+          tag: h.tagName.toLowerCase(),
+          text: h.textContent?.trim() || '',
+        }));
 
-      const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).map(btn => ({
-        text: btn.textContent?.trim() || '',
-        ariaLabel: btn.getAttribute('aria-label') || '',
-      }));
+        const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).map(btn => ({
+          text: btn.textContent?.trim() || '',
+          ariaLabel: btn.getAttribute('aria-label') || '',
+        }));
 
-      const forms = Array.from(document.querySelectorAll('form, input, textarea, select')).map(form => ({
-        type: form.tagName.toLowerCase(),
-        label: form.getAttribute('aria-label') ||
-          (form.previousElementSibling?.textContent?.trim()) || '',
-        required: form.hasAttribute('required'),
-      }));
+        const forms = Array.from(document.querySelectorAll('form, input, textarea, select')).map(form => ({
+          type: form.tagName.toLowerCase(),
+          label: form.getAttribute('aria-label') ||
+            (form.previousElementSibling?.textContent?.trim()) || '',
+          required: form.hasAttribute('required'),
+        }));
 
-      const textElements = Array.from(document.querySelectorAll('p, span, div, a, button, h1, h2, h3, h4, h5, h6'))
-        .slice(0, 20)
-        .map(el => getComputedStyles(el));
+        const textElements = Array.from(document.querySelectorAll('p, span, div, a, button, h1, h2, h3, h4, h5, h6'))
+          .slice(0, 20)
+          .map(el => getComputedStyles(el));
 
-      return {
-        title: document.title,
-        metaDescription: document.querySelector('meta[name="description"]')?.getAttribute('content') || '',
-        url: window.location.href,
-        images,
-        links,
-        headings,
-        buttons,
-        forms,
-        textStyles: textElements,
-        html: document.documentElement.outerHTML.substring(0, 50000),
-      };
-    });
+        return {
+          title: document.title,
+          metaDescription: document.querySelector('meta[name="description"]')?.getAttribute('content') || '',
+          url: window.location.href,
+          images,
+          links,
+          headings,
+          buttons,
+          forms,
+          textStyles: textElements,
+          html: document.documentElement.outerHTML.substring(0, 50000),
+        };
+      });
 
-    const dataExtractionTimeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Data extraction timeout after ${DATA_EXTRACTION_TIMEOUT}ms`)), DATA_EXTRACTION_TIMEOUT)
-    );
+      const dataExtractionTimeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Data extraction timeout after ${DATA_EXTRACTION_TIMEOUT}ms`)), DATA_EXTRACTION_TIMEOUT)
+      );
 
-    const pageData = await Promise.race([pageDataPromise, dataExtractionTimeoutPromise]);
-    console.log(`  ✅ Page data extracted (${pageData.images.length} images, ${pageData.links.length} links)`);
+      pageData = await Promise.race([pageDataPromise, dataExtractionTimeoutPromise]) as any;
+      console.log(`  ✅ Page data extracted (${pageData.images.length} images, ${pageData.links.length} links)`);
+    } catch (extractError: any) {
+      console.warn(`  ⚠️ Page response data failed to load: ${extractError.message}. Using minimal data so audit can continue.`);
+      pageData = minimalPageDataFallback as any;
+    }
 
-    // Take screenshot with timeout
+    // Take screenshot with timeout; use placeholder if screenshot fails
+    let screenshot: string | Buffer | null = null;
     console.log(`  📸 Taking screenshot...`);
     const SCREENSHOT_TIMEOUT = 10000; // 10 seconds max for screenshot
-    const screenshotPromise = page.screenshot({ encoding: 'base64', fullPage: false });
-    const screenshotTimeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Screenshot timeout after ${SCREENSHOT_TIMEOUT}ms`)), SCREENSHOT_TIMEOUT)
-    );
-    const screenshot = await Promise.race([screenshotPromise, screenshotTimeoutPromise]);
-    console.log(`  ✅ Screenshot captured`);
+    try {
+      const screenshotPromise = page.screenshot({ encoding: 'base64', fullPage: false });
+      const screenshotTimeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Screenshot timeout after ${SCREENSHOT_TIMEOUT}ms`)), SCREENSHOT_TIMEOUT)
+      );
+      screenshot = await Promise.race([screenshotPromise, screenshotTimeoutPromise]) as string | Buffer;
+      console.log(`  ✅ Screenshot captured`);
+    } catch (screenshotError: any) {
+      console.warn(`  ⚠️ Screenshot failed: ${screenshotError.message}. Continuing without screenshot.`);
+    }
 
     if (isLocalBrowser) {
       await browser.close();
@@ -458,9 +484,10 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
 
     let message: any = null;
     const rateLimiter = getRateLimiter();
-    // Optimized for Netlify 26s limit with increased timeout
-    // Page load: ~12s max, AI analysis: ~5s max = 17s total per page
-    const AI_ANALYSIS_TIMEOUT = 25000; // 25 seconds max for AI analysis (increased for better success rate)
+    // AI analysis timeout: 20s (fits within page timeout of 20s)
+    // This ensures full processing time while staying within Netlify's 26s limit
+    const AI_ANALYSIS_TIMEOUT = CONFIG.batch.aiAnalysisTimeout;
+    console.log(`  [AI] Timeout: ${AI_ANALYSIS_TIMEOUT}ms`);
 
     for (const modelName of modelNames) {
       try {
@@ -470,9 +497,10 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
         console.log(`  🤖 Trying model: ${modelName}`);
 
         // Wrap AI API call in timeout to prevent hanging
+        // Keep original max_tokens for full analysis quality
         const aiPromise = anthropic.messages.create({
           model: modelName,
-          max_tokens: 4000,
+          max_tokens: 4000, // Original max_tokens for full analysis
           messages: [{
             role: 'user',
             content: analysisPrompt,
@@ -897,7 +925,7 @@ Focus on the most impactful issues. Return 8-15 findings total.`;
       timestamp: new Date().toISOString(),
       findings,
       summary,
-      screenshot: `data:image/png;base64,${screenshot}`,
+      screenshot: screenshot ? `data:image/png;base64,${screenshot}` : undefined,
     };
   } catch (error: any) {
     // Ensure browser is closed even on error

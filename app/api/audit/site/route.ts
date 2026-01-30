@@ -191,7 +191,19 @@ export async function POST(request: NextRequest) {
           pageUrls = discoveredPages.map(page => page.url);
           actualPageCount = Math.min(pageUrls.length, maxPages);
 
-          console.log(`✅ Discovered ${actualPageCount} pages`);
+          console.log(`✅ Discovered ${pageUrls.length} pages (requested: ${maxPages}, will audit: ${actualPageCount})`);
+          
+          // CRITICAL: Log if we didn't discover the requested number of pages
+          if (pageUrls.length < maxPages) {
+            console.warn(`⚠️ WARNING: Only discovered ${pageUrls.length} pages, but requested ${maxPages} pages`);
+            console.warn(`⚠️ This may be because:`);
+            console.warn(`   - The website has fewer than ${maxPages} pages`);
+            console.warn(`   - Discovery timeout (45s) was reached`);
+            console.warn(`   - Sitemap doesn't contain ${maxPages} pages`);
+            console.warn(`   - Depth-based crawling didn't find ${maxPages} pages`);
+          } else {
+            console.log(`✅ Successfully discovered ${pageUrls.length} pages (requested: ${maxPages})`);
+          }
         }
 
         // Update progress tracker with discovered pages (or retry URLs)
@@ -243,6 +255,15 @@ export async function POST(request: NextRequest) {
         // Save updated progress - ensure it's persisted
         const pendingCount = progress.pageResults.filter(p => p.status === 'pending').length;
         console.log(`[Background] 📝 Progress has ${progress.pageResults.length} pages (${pendingCount} pending)...`);
+        console.log(`[Background] 📊 Total pages to audit: ${progress.totalPages}`);
+        console.log(`[Background] 📋 Page URLs: ${progress.pageResults.map(p => p.url).join(', ')}`);
+        
+        // CRITICAL: Verify all pages are properly set
+        if (progress.pageResults.length !== progress.totalPages) {
+          console.error(`[Background] ❌ CRITICAL: Page count mismatch! pageResults.length (${progress.pageResults.length}) !== totalPages (${progress.totalPages})`);
+        } else {
+          console.log(`[Background] ✅ Page count verified: ${progress.pageResults.length} pages match totalPages`);
+        }
         
         // For retry mode, verify all retry URLs are marked as pending
         if (retryUrls && Array.isArray(retryUrls) && retryUrls.length > 0) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getProgress, updateStatus, updatePageProgress, saveFinalResult } from '../../../../lib/progressTracker';
 import { processBatches } from '../../../../lib/batchProcessor';
 import { aggregateAuditResults, sortPagesBySeverity } from '../../../../lib/batchAuditor';
+import { CONFIG } from '../../../../lib/config';
 
 // Vercel serverless function configuration
 // Serverless function configuration
@@ -38,13 +39,14 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Job not found' }, { status: 404 });
         }
 
-        // 2. Identify pending pages
-        const pendingPages = progress.pageResults
-            .filter(p => p.status === 'pending')
+        // 2. Identify pages still to audit (pending + processing - never skip other pages)
+        // Include 'processing' so stuck pages from timeout get retried
+        const pagesToAudit = progress.pageResults
+            .filter(p => p.status !== 'completed' && p.status !== 'failed')
             .map(p => p.url);
 
-        if (pendingPages.length === 0) {
-            console.log(`[Batch] ✅ No pending pages. Job completed.`);
+        if (pagesToAudit.length === 0) {
+            console.log(`[Batch] ✅ No pages left to audit (all completed or failed). Job completed.`);
 
             if (progress.status !== 'completed') {
                 await updateStatus(jobId, 'completed');
@@ -53,11 +55,9 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ status: 'completed', message: 'All pages processed' });
         }
 
-        // 3. Define Batch Size - OPTIMIZED for Netlify 26s limit
-        // Process only 1 page per batch to allow 20s timeout per page
-        // Each page: ~15-20s max (page load + AI analysis + DB save)
-        // 1 page × 20s = 20s max, leaving 6s buffer for overhead
-        const BATCH_SIZE = 1; // Reduced to 1 page per batch to allow 20s timeout per page
+        // 3. Process one page at a time (not in batches)
+        // Each page gets full 20s timeout, fits within Netlify's 26s limit
+        const BATCH_SIZE = 1; // One page at a time - no batching
         
         // CRITICAL: Re-fetch progress right before creating batches
         // This ensures we have the latest status and don't include pages that just completed
@@ -66,14 +66,27 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Job not found' }, { status: 404 });
         }
         
-        // Double-check that pages are still pending before processing
-        // This prevents re-auditing completed pages
+        // Include BOTH 'pending' and 'processing' pages - never skip other pages
+        // 'processing' may be stuck from a previous timed-out invocation (Netlify 26s)
+        // so we must retry them or those pages would never be audited
         const verifiedPendingPages = freshProgress.pageResults
             .filter(p => {
-                if (p.status !== 'pending') {
-                    console.log(`[Batch] ⚠️ Skipping ${p.url} - status is ${p.status}, not pending`);
+                if (p.status === 'completed') {
+                    console.log(`[Batch] ⏭️ Excluding ${p.url} - already completed`);
                     return false;
                 }
+                if (p.status === 'failed') {
+                    console.log(`[Batch] ⏭️ Excluding ${p.url} - already failed`);
+                    return false;
+                }
+                if (p.status === 'pending' || p.status === 'processing') {
+                    if (p.status === 'processing') {
+                        console.log(`[Batch] ✅ Including ${p.url} (was processing - may be stuck, will retry)`);
+                    }
+                    return true;
+                }
+                // Unknown status - include to avoid skipping
+                console.log(`[Batch] ✅ Including ${p.url} (status: ${p.status})`);
                 return true;
             })
             .map(p => p.url);
@@ -93,15 +106,17 @@ export async function POST(request: NextRequest) {
         console.log(`[Batch] 📦 Batch ${currentBatchNumber}/${totalBatches}: Processing ${currentBatchUrls.length} pages`);
         console.log(`[Batch]    URLs: ${currentBatchUrls.join(', ')}`);
 
-        // 4. Process this batch with optimized timeouts
+        // 4. Process one page at a time with original timeouts
+        // Each page: 20s timeout (includes page load + AI analysis + DB save)
+        // Fits within Netlify's 26s function limit (6s buffer for overhead)
         const batchStartTime = Date.now();
         try {
             const batchResult = await processBatches(currentBatchUrls, jobId, {
-                batchSize: BATCH_SIZE,
-                delayBetweenBatches: 0, // No delay needed - we're processing one small batch
-                delayBetweenRequests: 500, // Reduced from 1000ms to 500ms for faster processing
-                maxRetries: 1, // Single retry to fail fast
-                timeoutPerPage: 20000 // Increased to 20s per page for better success rate
+                batchSize: BATCH_SIZE, // 1 page at a time
+                delayBetweenBatches: 0, // No delay needed for single-page processing
+                delayBetweenRequests: CONFIG.batch.delayBetweenRequests, // 500ms delay (original)
+                maxRetries: CONFIG.batch.maxRetries, // Single retry
+                timeoutPerPage: CONFIG.batch.timeoutPerPage // 20s per page (original, fits Netlify 26s limit)
             });
             console.log(`[Batch] ✅ Batch processed: ${batchResult.successful.length} successful, ${batchResult.failed.length} failed`);
         } catch (err: any) {
@@ -113,50 +128,123 @@ export async function POST(request: NextRequest) {
         const batchDuration = Date.now() - batchStartTime;
         console.log(`[Batch] ⏱️ Batch processing duration: ${batchDuration}ms`);
 
-        // 5. Re-check progress to get accurate remaining count
-        const updatedProgress = await getProgress(jobId);
-        if (!updatedProgress) {
-            console.error(`[Batch] ❌ Could not get updated progress after batch processing`);
-            return NextResponse.json({ error: 'Failed to get updated progress' }, { status: 500 });
+        // 5. Brief wait so Redis has current page status (stay under Netlify 26s)
+        const verifyWaitMs = 400;
+        await new Promise(resolve => setTimeout(resolve, verifyWaitMs));
+        const verifyProgress = await getProgress(jobId);
+        if (verifyProgress) {
+            const currentPageResult = verifyProgress.pageResults.find(p => currentBatchUrls.includes(p.url));
+            if (currentPageResult) {
+                console.log(`[Batch] ✅ Page ${currentPageResult.url} is ${currentPageResult.status}`);
+            }
+        }
+
+        // 6. Re-check progress to get accurate remaining count
+        // CRITICAL: Don't fail if progress check fails - continue processing remaining pages
+        let updatedProgress;
+        try {
+            updatedProgress = await getProgress(jobId);
+            if (!updatedProgress) {
+                console.error(`[Batch] ⚠️ Could not get updated progress after batch processing - will continue anyway`);
+                // Use previous progress as fallback
+                updatedProgress = progress;
+            }
+        } catch (progressError: any) {
+            console.error(`[Batch] ⚠️ Error getting updated progress: ${progressError.message} - will continue anyway`);
+            // Use previous progress as fallback
+            updatedProgress = progress;
         }
         
-        // CRITICAL: Re-verify pending pages after batch processing
-        // This ensures we don't include pages that were just completed
-        const remainingPendingPages = updatedProgress.pageResults
-            .filter(p => {
-                const status = p.status;
-                if (status !== 'pending') {
-                    console.log(`[Batch] ⚠️ Excluding ${p.url} from next batch - status is ${status}`);
-                    return false;
+        if (!updatedProgress) {
+            console.error(`[Batch] ⚠️ No progress available - cannot determine remaining pages, but will attempt to continue`);
+            // Still try to trigger next batch if we have jobId
+            // Don't return error - let the trigger logic handle it
+        }
+        
+        // Remaining pages = not completed and not failed (pending + processing)
+        // Include 'processing' so stuck pages get retried - never skip other pages
+        let remainingPendingPages: string[] = [];
+        if (updatedProgress && Array.isArray(updatedProgress.pageResults)) {
+            remainingPendingPages = updatedProgress.pageResults
+                .filter(p => {
+                    const status = p.status;
+                    if (status === 'completed' || status === 'failed') {
+                        return false;
+                    }
+                    // pending or processing - need to be audited
+                    return true;
+                })
+                .map(p => p.url);
+        } else {
+            console.warn(`[Batch] ⚠️ Could not get page results - will attempt to continue with available information`);
+            try {
+                const fallbackProgress = await getProgress(jobId);
+                if (fallbackProgress && Array.isArray(fallbackProgress.pageResults)) {
+                    remainingPendingPages = fallbackProgress.pageResults
+                        .filter(p => p.status !== 'completed' && p.status !== 'failed')
+                        .map(p => p.url);
                 }
-                return true;
-            })
-            .map(p => p.url);
+            } catch (fallbackError: any) {
+                console.error(`[Batch] ⚠️ Fallback progress check also failed: ${fallbackError.message}`);
+            }
+        }
 
-        console.log(`[Batch] 📊 After batch processing: ${remainingPendingPages.length} pages still pending`);
-        console.log(`[Batch]    Completed: ${updatedProgress.completedPages}/${updatedProgress.totalPages}`);
+        console.log(`[Batch] 📊 After page completion: ${remainingPendingPages.length} pages still pending`);
+        if (updatedProgress) {
+            console.log(`[Batch]    Completed: ${updatedProgress.completedPages}/${updatedProgress.totalPages}`);
+            console.log(`[Batch]    Total pages in progress: ${updatedProgress.pageResults.length}`);
+            console.log(`[Batch]    Page statuses: ${updatedProgress.pageResults.map(p => `${p.url}:${p.status}`).join(', ')}`);
+            
+            // CRITICAL: Verify all pages are accounted for
+            const completedCount = updatedProgress.pageResults.filter(p => p.status === 'completed').length;
+            const failedCount = updatedProgress.pageResults.filter(p => p.status === 'failed').length;
+            const pendingCount = updatedProgress.pageResults.filter(p => p.status === 'pending').length;
+            const processingCount = updatedProgress.pageResults.filter(p => p.status === 'processing').length;
+            
+            console.log(`[Batch]    Status breakdown: ${completedCount} completed, ${failedCount} failed, ${pendingCount} pending, ${processingCount} processing`);
+            
+            if (updatedProgress.pageResults.length !== updatedProgress.totalPages) {
+                console.error(`[Batch] ❌ CRITICAL: Page count mismatch! pageResults.length (${updatedProgress.pageResults.length}) !== totalPages (${updatedProgress.totalPages})`);
+            }
+        } else {
+            console.log(`[Batch]    Progress unavailable - continuing anyway`);
+        }
 
-        // 6. Recursive Call or Finalization
+        // 7. Trigger next page WITHOUT waiting (fire-and-forget)
+        // CRITICAL: Netlify kills the function at 26s. If we AWAIT the next batch response,
+        // we exceed 26s and get killed before the trigger completes. So we fire the request
+        // and return immediately so all pages get audited.
         if (remainingPendingPages.length > 0) {
             const nextBatchNumber = currentBatchNumber + 1;
-            console.log(`[Batch] 🔄 Triggering batch ${nextBatchNumber}/${totalBatches} (${remainingPendingPages.length} pages remaining)`);
+            console.log(`[Batch] 🔄 Triggering next page ${nextBatchNumber}/${totalBatches} (${remainingPendingPages.length} pages remaining) - fire-and-forget`);
 
             const origin = new URL(request.url).origin;
             const nextBatchUrl = `${origin}/api/audit/batch`;
 
-            console.log(`[Batch] 🔗 Next batch URL: ${nextBatchUrl}`);
+            // Fire-and-forget: do NOT await - stay under 26s so next batch actually runs
+            fetch(nextBatchUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jobId })
+            }).then((res) => {
+                if (res.ok) {
+                    console.log(`[Batch] ✅ Next page ${nextBatchNumber} triggered successfully`);
+                } else {
+                    console.error(`[Batch] ❌ Next batch returned ${res.status}`);
+                }
+            }).catch((err: any) => {
+                console.error(`[Batch] ❌ Next batch trigger failed: ${err.message}`);
+                // Retry once after 1s (runs in background)
+                setTimeout(() => {
+                    fetch(nextBatchUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ jobId })
+                    }).then((r) => console.log(`[Batch] 🔄 Retry trigger: ${r.ok ? 'ok' : r.status}`)).catch((e: any) => console.error(`[Batch] ❌ Retry trigger failed: ${e.message}`));
+                }, 1000);
+            });
 
-            // Trigger next batch asynchronously (don't wait for it)
-            try {
-                fetch(nextBatchUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jobId })
-                }).catch(e => console.error(`[Batch] ❌ Failed to trigger next batch: ${e.message}`));
-
-            } catch (e) {
-                console.error(`[Batch] ❌ Error initiating next batch:`, e);
-            }
+            console.log(`[Batch] ✅ Next page trigger sent (not waiting for response)`);
         } else {
             // No more pages, we are done
             console.log(`[Batch] ✅ Final batch completed.`);
@@ -201,10 +289,13 @@ export async function POST(request: NextRequest) {
         }
 
         const totalFunctionDuration = Date.now() - functionStartTime;
-        console.log(`[Batch] ⏱️ Total function duration: ${totalFunctionDuration}ms (Netlify limit: 26000ms)`);
+        const netlifyLimit = 26000;
+        const platform = CONFIG.platform.isNetlify ? 'Netlify' : CONFIG.platform.isVercel ? 'Vercel' : 'Local';
+        console.log(`[Batch] ⏱️ Total function duration: ${totalFunctionDuration}ms (${platform} limit: ${CONFIG.platform.isNetlify ? netlifyLimit : 'N/A'}ms)`);
         
-        if (totalFunctionDuration > 24000) {
-            console.warn(`[Batch] ⚠️ WARNING: Function took ${totalFunctionDuration}ms - close to Netlify 26s limit!`);
+        if (CONFIG.platform.isNetlify && totalFunctionDuration > netlifyLimit - 2000) {
+            console.warn(`[Batch] ⚠️ WARNING: Function took ${totalFunctionDuration}ms - close to Netlify ${netlifyLimit/1000}s limit!`);
+            console.warn(`[Batch] ⚠️ Remaining buffer: ${netlifyLimit - totalFunctionDuration}ms`);
         }
 
         return NextResponse.json({
@@ -221,6 +312,46 @@ export async function POST(request: NextRequest) {
     } catch (error: any) {
         const totalFunctionDuration = Date.now() - functionStartTime;
         console.error(`[Batch] ❌ Critical error after ${totalFunctionDuration}ms: ${error.message}`);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        console.error(`[Batch] Error stack:`, error.stack);
+        
+        // CRITICAL: Even on critical error, try to trigger next batch if possible
+        // This ensures processing continues even if this function fails
+        try {
+            const errorProgress = await getProgress(jobId);
+            if (errorProgress) {
+                const errorPendingPages = errorProgress.pageResults
+                    .filter(p => p.status !== 'completed' && p.status !== 'failed')
+                    .map(p => p.url);
+                
+                if (errorPendingPages.length > 0) {
+                    console.log(`[Batch] 🔄 Attempting to trigger next batch despite error (${errorPendingPages.length} pages remaining)...`);
+                    const origin = new URL(request.url).origin;
+                    const nextBatchUrl = `${origin}/api/audit/batch`;
+                    
+                    // Non-blocking trigger - don't await
+                    setTimeout(async () => {
+                        try {
+                            await fetch(nextBatchUrl, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ jobId })
+                            });
+                            console.log(`[Batch] ✅ Error recovery: Next batch triggered successfully`);
+                        } catch (recoveryError: any) {
+                            console.error(`[Batch] ❌ Error recovery trigger failed: ${recoveryError.message}`);
+                        }
+                    }, 1000);
+                }
+            }
+        } catch (recoveryCheckError: any) {
+            console.error(`[Batch] ⚠️ Could not attempt error recovery: ${recoveryCheckError.message}`);
+        }
+        
+        // Return error but don't prevent continuation
+        return NextResponse.json({ 
+            error: error.message,
+            message: 'Batch processing encountered an error, but will attempt to continue processing remaining pages.',
+            jobId 
+        }, { status: 500 });
     }
 }
