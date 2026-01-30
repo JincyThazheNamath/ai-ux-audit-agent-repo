@@ -280,9 +280,6 @@ Report ID: ${result.timestamp}
             <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-3 sm:mb-4">
             AI UX Audit Agent
           </h1>
-            <div className="flex items-center justify-center gap-4 mb-4">
-              <ViewModeSwitcher />
-            </div>
             <p className="text-sm sm:text-base md:text-lg text-gray-300 max-w-2xl mx-auto px-4">
             Automated UX analysis powered by AI. Get instant insights on accessibility, 
             usability, design consistency, and more.
@@ -291,7 +288,11 @@ Report ID: ${result.timestamp}
 
         {/* Input Section */}
         <div className="bg-[#1a2332] rounded-2xl shadow-xl p-4 sm:p-6 md:p-8 mb-6 sm:mb-8 border border-gray-700/50">
-          {/* Audit Mode Selector */}
+          {/* Report style: Professional / Business */}
+          <div className="mb-6">
+            <ViewModeSwitcher />
+          </div>
+          {/* Audit Mode Selector: Single Page / Full Site */}
           <div className="flex gap-2 mb-4 p-1 bg-[#0a1628] rounded-lg">
             <button
               onClick={() => {
