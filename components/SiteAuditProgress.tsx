@@ -37,19 +37,26 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
   const MAX_RETRIES = 10; // Max retries for 404 errors
   const MAX_PROGRESS_CHECK_FAILURES = 8; // Only show error after 8 consecutive progress check failures (~12s)
   const MAX_FINAL_RESULT_RETRIES = 30; // Max retries for missing finalResult (30 * 1.5s = 45s)
-  const MAX_WAIT_TIME = 15 * 60 * 1000; // 15 minutes max wait time (increased for 40 pages with sequential processing)
+  const SOFT_WARNING_TIME = 15 * 60 * 1000; // At 15 min show "still processing" notice but keep polling
+  const MAX_WAIT_TIME = 25 * 60 * 1000; // 25 minutes max wait (40 pages can take 15–20+ min on Netlify)
   const STUCK_THRESHOLD_MS = 45000; // If no progress for 45s, trigger batch to resume chain
+
+  const [longRunningNotice, setLongRunningNotice] = useState(false);
 
   useEffect(() => {
     if (!jobId) return;
 
     const pollProgress = async () => {
       try {
-        // Check if we've exceeded max wait time
         const elapsed = Date.now() - startTime;
+        // At 15 min: show notice but keep polling (don't call onError)
+        if (elapsed >= SOFT_WARNING_TIME) {
+          setLongRunningNotice(true);
+        }
+        // Only give up and show error after 25 minutes
         if (elapsed > MAX_WAIT_TIME) {
           const elapsedMinutes = Math.floor(elapsed / 60000);
-          onError(`Audit is taking longer than expected (${elapsedMinutes} minutes). The audit may still be processing. For 40 pages, this can take up to 15 minutes. Please wait a bit longer or check the progress below.`);
+          onError(`Audit is taking longer than expected (${elapsedMinutes} minutes). For 40 pages, audits can take up to 25 minutes on Netlify. You can keep this page open—we'll show results when ready—or start a new audit with fewer pages.`);
           return;
         }
 
@@ -306,13 +313,28 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
               </span>
             </div>
             <div className="mt-2 text-xs text-gray-400">
-              Each page takes ~20 seconds. Estimated total time: ~{Math.ceil((progress.totalPages - progress.completedPages) * 20 / 60)} minutes
+              Each page takes ~20 seconds. For {progress.totalPages} pages, total time can be up to ~25 minutes on Netlify.
             </div>
             {progress.currentPage && (
               <div className="mt-2 text-xs text-teal-400">
                 Currently auditing: {progress.currentPage}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Long-running notice: keep polling, don't treat as error */}
+        {longRunningNotice && progress.status !== 'completed' && progress.status !== 'failed' && (
+          <div className="rounded-lg p-4 border border-amber-500/40 bg-amber-500/10">
+            <div className="flex items-start gap-2 text-amber-200">
+              <Clock size={20} className="flex-shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <span className="font-medium">Still processing</span>
+                <p className="mt-1 text-amber-200/90">
+                  Large audits (e.g. 40 pages) can take 15–25 minutes on Netlify. Keep this page open—we&apos;ll show results as soon as they&apos;re ready.
+                </p>
+              </div>
+            </div>
           </div>
         )}
 

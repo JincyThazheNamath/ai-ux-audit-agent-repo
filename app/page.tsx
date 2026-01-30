@@ -362,15 +362,26 @@ Report ID: ${result.timestamp}
             </button>
           </div>
           {error && (
-            <div className="mt-4 p-4 bg-red-900/30 border border-red-500/50 rounded-lg flex items-start gap-2 text-red-300">
+            <div className={`mt-4 p-4 rounded-lg flex items-start gap-2 ${
+              error.includes('taking longer than expected')
+                ? 'bg-amber-900/20 border border-amber-500/50 text-amber-200'
+                : 'bg-red-900/30 border border-red-500/50 text-red-300'
+            }`}>
               <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
               <div className="flex-1">
-                <span className="font-semibold">Error:</span>
-                <span className="ml-2">{error}</span>
-                {error.includes('taking longer than expected') && (
-                  <p className="text-sm text-red-200 mt-2">
-                    The audit is still processing in the background. You can keep this page open and check back in a few minutes, or start a new audit with fewer pages.
-                  </p>
+                {error.includes('taking longer than expected') ? (
+                  <>
+                    <span className="font-semibold">Note:</span>
+                    <span className="ml-2">{error}</span>
+                    <p className="text-sm mt-2 opacity-90">
+                      You can keep this page open—results will appear when ready—or start a new audit with fewer pages.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold">Error:</span>
+                    <span className="ml-2">{error}</span>
+                  </>
                 )}
               </div>
             </div>
