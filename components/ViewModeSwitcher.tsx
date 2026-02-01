@@ -14,15 +14,11 @@ export default function ViewModeSwitcher() {
   const { mode, setMode } = useViewMode();
 
   return (
-    <div className="space-y-2">
-      <p className="text-sm font-medium text-gray-300">
-        Report style — how you&apos;d like your insights framed
-      </p>
-      <div className="flex gap-3 sm:gap-4">
+    <div className="flex gap-3 sm:gap-4">
         <button
           type="button"
           onClick={() => setMode('professional')}
-          className={`
+          className={`cursor-pointer
             flex-1 flex flex-col items-center sm:items-start gap-1 px-4 sm:px-5 py-3 sm:py-4 rounded-xl text-left transition-all duration-200 border-2
             ${mode === 'professional'
               ? 'bg-teal-600/20 border-teal-500 text-white shadow-lg shadow-teal-500/10'
@@ -43,7 +39,7 @@ export default function ViewModeSwitcher() {
         <button
           type="button"
           onClick={() => setMode('business')}
-          className={`
+          className={`cursor-pointer
             flex-1 flex flex-col items-center sm:items-start gap-1 px-4 sm:px-5 py-3 sm:py-4 rounded-xl text-left transition-all duration-200 border-2
             ${mode === 'business'
               ? 'bg-teal-600/20 border-teal-500 text-white shadow-lg shadow-teal-500/10'
@@ -61,7 +57,6 @@ export default function ViewModeSwitcher() {
             Strategic insights for Directors and C-Suite leaders
           </span>
         </button>
-      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ExternalLink, AlertTriangle, TrendingUp, BarChart3, XCircle, RefreshCw, Clock, Wifi, Server, Zap, Download } from 'lucide-react';
+import { ChevronRight, AlertTriangle, TrendingUp, BarChart3, XCircle, RefreshCw, Clock, Wifi, Server, Zap, Download } from 'lucide-react';
 import { AggregatedAuditResult, PageAuditResult } from '../lib/batchAuditor';
 import { AuditResult } from '../types/audit';
 import { useViewMode } from '../contexts/ViewModeContext';
@@ -238,7 +238,7 @@ export default function SiteOverview({ aggregatedResult, sortedPages, failedPage
                       <span className="text-gray-500">{pageResult.totalIssues} issues</span>
                     </div>
                   </div>
-                  <ExternalLink className="text-teal-500 flex-shrink-0 ml-4" size={20} />
+                  <ChevronRight className="text-teal-500 flex-shrink-0 ml-4" size={20} />
                 </div>
               </button>
             );

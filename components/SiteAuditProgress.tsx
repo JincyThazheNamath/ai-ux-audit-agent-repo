@@ -344,8 +344,8 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
             <h4 className="text-sm font-semibold text-gray-300">
               Page Status ({progress.pageResults.length} total)
             </h4>
-            <div className="max-h-64 overflow-y-auto space-y-1">
-              {progress.pageResults.slice(0, 20).map((page, index) => {
+            <div className="max-h-80 overflow-y-auto space-y-1">
+              {progress.pageResults.map((page, index) => {
                 // Already audited = completed status OR has a score (successful audit) → green check
                 const hasScore = page.score !== undefined && page.score !== null;
                 const isCompleted = page.status === 'completed' || hasScore;
@@ -370,11 +370,6 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
                   )}
                 </div>
               );})}
-              {progress.pageResults.length > 20 && (
-                <div className="text-xs text-gray-500 text-center py-2">
-                  +{progress.pageResults.length - 20} more pages
-                </div>
-              )}
             </div>
           </div>
         )}

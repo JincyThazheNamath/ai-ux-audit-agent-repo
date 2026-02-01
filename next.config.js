@@ -2,6 +2,16 @@
 const nextConfig = {
   // Allow build to succeed; run `npm run lint` to check ESLint (warnings only)
   eslint: { ignoreDuringBuilds: true },
+  // Redirect unknown routes to / so users never see 404 (backup to middleware)
+  async redirects() {
+    return [
+      { source: '/dashboard', destination: '/', permanent: false },
+      { source: '/about', destination: '/', permanent: false },
+      { source: '/login', destination: '/', permanent: false },
+      { source: '/signin', destination: '/', permanent: false },
+      { source: '/home', destination: '/', permanent: false },
+    ];
+  },
   // Enable compression
   compress: true,
   

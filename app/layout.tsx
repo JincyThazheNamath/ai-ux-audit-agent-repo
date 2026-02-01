@@ -30,6 +30,7 @@ export default function RootLayout({
     <html lang="en">
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}
+        style={{ minHeight: '100vh', backgroundColor: '#0a1628', color: '#fff', margin: 0 }}
       >
         {children}
       </body>

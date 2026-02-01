@@ -18,22 +18,26 @@ interface CrawledPage {
 }
 
 /**
- * Normalizes a URL to ensure it's absolute and has a protocol
+ * Normalizes a URL to ensure it's absolute, has a protocol, and has no fragment.
+ * Stripping the hash ensures anchor links (e.g. /page#section) are treated as the same page.
  */
 function normalizeUrl(url: string, baseUrl: string): string {
   try {
+    let absolute: string;
     if (url.startsWith('http://') || url.startsWith('https://')) {
-      return url;
-    }
-    if (url.startsWith('//')) {
-      return `https:${url}`;
-    }
-    if (url.startsWith('/')) {
+      absolute = url;
+    } else if (url.startsWith('//')) {
+      absolute = `https:${url}`;
+    } else if (url.startsWith('/')) {
       const base = new URL(baseUrl);
-      return `${base.protocol}//${base.host}${url}`;
+      absolute = `${base.protocol}//${base.host}${url}`;
+    } else {
+      const base = new URL(baseUrl);
+      absolute = new URL(url, baseUrl).toString();
     }
-    const base = new URL(baseUrl);
-    return new URL(url, baseUrl).toString();
+    // Ignore anchor links as separate pages: strip fragment so /page#a and /page#b → same page
+    const withoutHash = absolute.split('#')[0];
+    return withoutHash || absolute;
   } catch {
     return '';
   }
@@ -60,7 +64,8 @@ function isSameDomain(url: string, baseDomain: string, includeSubdomains: boolea
 }
 
 /**
- * Checks if URL should be excluded (fragments, mailto, tel, etc.)
+ * Checks if URL should be excluded (mailto, tel, javascript, etc.).
+ * Fragment-only or same-page anchors are handled by normalizeUrl (strip hash).
  */
 function shouldExcludeUrl(url: string): boolean {
   try {
@@ -68,8 +73,7 @@ function shouldExcludeUrl(url: string): boolean {
     return (
       urlObj.protocol === 'mailto:' ||
       urlObj.protocol === 'tel:' ||
-      urlObj.protocol === 'javascript:' ||
-      urlObj.hash.length > 0 // Exclude URLs with fragments
+      urlObj.protocol === 'javascript:'
     );
   } catch {
     return true;
@@ -298,10 +302,11 @@ export async function discoverPagesWithDepth(
   const discoveredPages: Map<string, CrawledPage> = new Map();
   const toVisit: Array<{ url: string; depth: number; parentUrl?: string }> = [];
   
-  // Normalize start URL
+  // Normalize start URL (strip anchor so /# is treated as /)
   let baseUrl: string;
   try {
-    baseUrl = startUrl.startsWith('http') ? startUrl : `https://${startUrl}`;
+    const withProtocol = startUrl.startsWith('http') ? startUrl : `https://${startUrl}`;
+    baseUrl = withProtocol.split('#')[0] || withProtocol;
     new URL(baseUrl);
   } catch {
     throw new Error('Invalid URL provided');
@@ -314,12 +319,12 @@ export async function discoverPagesWithDepth(
       console.log(`Found sitemap: ${sitemapUrl}`);
       const sitemapUrls = await parseSitemap(sitemapUrl);
       
-      // Filter and limit pages from sitemap
+      // Filter and limit pages from sitemap (strip anchor so same page isn't counted twice)
       let count = 0;
-      for (const url of sitemapUrls) {
+      for (const rawUrl of sitemapUrls) {
         if (count >= maxPages) break;
-        
-        if (isSameDomain(url, baseUrl, includeSubdomains)) {
+        const url = rawUrl.split('#')[0] || rawUrl;
+        if (isSameDomain(url, baseUrl, includeSubdomains) && !discoveredPages.has(url)) {
           discoveredPages.set(url, {
             url,
             depth: 0, // Sitemap pages are treated as depth 0

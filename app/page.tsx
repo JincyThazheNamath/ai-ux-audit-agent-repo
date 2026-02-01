@@ -273,8 +273,8 @@ Report ID: ${result.timestamp}
   };
 
   return (
-    <div className="min-h-screen bg-[#0a1628] overflow-x-hidden flex flex-col sm:!block">
-        <div className="container mx-auto px-4 py-8 max-w-7xl flex-1 sm:!flex-none flex flex-col sm:!block">
+    <div className="min-h-screen bg-[#0a1628] overflow-x-hidden flex flex-col" style={{ minHeight: '100vh', backgroundColor: '#0a1628' }}>
+        <div className="container mx-auto px-4 py-8 max-w-7xl flex-1 flex flex-col w-full">
         {/* Header */}
           <div className="text-center mb-6 sm:mb-8 md:mb-12">
             <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-3 sm:mb-4">
@@ -295,13 +295,14 @@ Report ID: ${result.timestamp}
           {/* Audit Mode Selector: Single Page / Full Site */}
           <div className="flex gap-2 mb-4 p-1 bg-[#0a1628] rounded-lg">
             <button
+              type="button"
               onClick={() => {
                 setAuditMode('single');
                 setResult(null);
                 setSiteAuditJobId(null);
                 setSiteAuditResult(null);
               }}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md transition-colors ${
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md transition-colors cursor-pointer ${
                 auditMode === 'single'
                   ? 'bg-teal-600 text-white'
                   : 'text-gray-400 hover:text-white'
@@ -311,13 +312,14 @@ Report ID: ${result.timestamp}
               <span className="text-sm font-medium">Single Page</span>
             </button>
             <button
+              type="button"
               onClick={() => {
                 setAuditMode('full-site');
                 setResult(null);
                 setSiteAuditJobId(null);
                 setSiteAuditResult(null);
               }}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md transition-colors ${
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md transition-colors cursor-pointer ${
                 auditMode === 'full-site'
                   ? 'bg-teal-600 text-white'
                   : 'text-gray-400 hover:text-white'
@@ -342,9 +344,10 @@ Report ID: ${result.timestamp}
               />
             </div>
             <button
+              type="button"
               onClick={handleAudit}
               disabled={loading}
-              className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-4 bg-[#14b8a6] text-white rounded-xl font-semibold hover:bg-[#0d9488] disabled:bg-teal-800 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 shadow-lg"
+              className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-4 bg-[#14b8a6] text-white rounded-xl font-semibold hover:bg-[#0d9488] disabled:bg-teal-800 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 shadow-lg cursor-pointer"
             >
               {loading ? (
                 <>
@@ -479,7 +482,7 @@ Report ID: ${result.timestamp}
         )}
 
         {/* Footer */}
-          <div className="text-center mt-8 sm:mt-12 pt-8 sm:pt-0 text-gray-400 flex-shrink-0 sm:!flex-none">
+          <div className="text-center mt-8 sm:mt-12 pt-8 text-gray-400 flex-shrink-0">
             <p className="text-xs sm:text-base">Powered by AI • Built for Lunim Studio</p>
         </div>
       </div>

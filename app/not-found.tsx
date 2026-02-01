@@ -19,13 +19,16 @@ export default function NotFound() {
           <p className="text-sm sm:text-base text-gray-300 mb-4 sm:mb-6">
             The page you're looking for doesn't exist or has been moved.
           </p>
+          <p className="text-xs text-gray-500 mb-4">
+            This app has one main page. Use the link below to open it.
+          </p>
           
           <Link
             href="/"
             className="inline-flex items-center gap-2 px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-medium transition-colors"
           >
             <Home size={20} />
-            Go to Home
+            Go to Home (AI UX Audit Agent)
           </Link>
         </div>
       </div>
