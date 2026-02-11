@@ -12,6 +12,9 @@ import { AuditResult, AuditFinding } from '../types/audit';
 import { getRateLimiter } from './rateLimiter';
 import { CONFIG } from './config';
 
+// Detect Netlify environment for timeout optimization
+const isNetlify = !!process.env.NETLIFY;
+
 const apiKey = process.env.ANTHROPIC_API_KEY || '';
 const anthropic = new Anthropic({ apiKey });
 
@@ -232,10 +235,12 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
 
     // Navigate to page with aggressive timeouts to prevent hanging
     console.log(`  📄 Loading page: ${targetUrl.toString()}`);
-    // Optimized for Netlify 26s limit with increased timeout
-    // Total per page: ~12s page load + ~5s AI analysis = 17s max per page
-    const PAGE_LOAD_TIMEOUT = 12000; // 12 seconds max for page load (increased for better success rate)
-    const DOM_CONTENT_TIMEOUT = 10000; // 10 seconds for domcontentloaded fallback
+    // Optimized for Netlify 26s limit
+    // Netlify: ~12s page load + ~15s AI analysis + ~2s overhead = 29s max, but timeoutPerPage=22s will catch it
+    // Other: ~12s page load + ~20s AI analysis = 32s max per page
+    // Using slightly longer timeouts to reduce false failures while still respecting Netlify's 26s limit
+    const PAGE_LOAD_TIMEOUT = isNetlify ? 12000 : 12000; // 12s for both (balanced)
+    const DOM_CONTENT_TIMEOUT = isNetlify ? 10000 : 10000; // 10s for both (balanced)
 
     try {
       // Use AbortController to ensure we can cancel if needed
@@ -300,7 +305,8 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
 
     // Extract page data with timeout; use fallback if response data fails to load
     console.log(`  📊 Extracting page data...`);
-    const DATA_EXTRACTION_TIMEOUT = 15000; // 15 seconds max for data extraction
+    // Balanced timeout - data extraction happens during page load, so this is a safety net
+    const DATA_EXTRACTION_TIMEOUT = isNetlify ? 10000 : 15000; // 10s for Netlify (balanced), 15s elsewhere
 
     const minimalPageDataFallback = {
       title: '',

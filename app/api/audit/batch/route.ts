@@ -262,7 +262,27 @@ export async function POST(request: NextRequest) {
 
                     // Fetch current progress to get failed pages list
                     const finalProgress = await getProgress(jobId);
-                    const failedPages = finalProgress ? finalProgress.pageResults.filter(p => p.status === 'failed') : [];
+                    
+                    // CRITICAL FIX: Exclude URLs from failedPages that were successfully retried
+                    // Get all successful URLs from results
+                    const successfulUrls = new Set(allResults.map(r => r.url));
+                    
+                    // Filter failed pages: only include pages that are still failed AND not in successful results
+                    const failedPages = finalProgress 
+                        ? finalProgress.pageResults.filter(p => {
+                            const isFailed = p.status === 'failed';
+                            const wasRetriedAndSucceeded = successfulUrls.has(p.url);
+                            
+                            // Only include if failed AND not successfully retried
+                            if (isFailed && wasRetriedAndSucceeded) {
+                                console.log(`[Batch] ✅ Excluding ${p.url} from failedPages - was retried and succeeded`);
+                                return false;
+                            }
+                            return isFailed;
+                        })
+                        : [];
+
+                    console.log(`[Batch] 📊 Failed pages after filtering: ${failedPages.length} (excluded ${finalProgress ? finalProgress.pageResults.filter(p => p.status === 'failed' && successfulUrls.has(p.url)).length : 0} successfully retried pages)`);
 
                     await saveFinalResult(jobId, {
                         aggregated,
