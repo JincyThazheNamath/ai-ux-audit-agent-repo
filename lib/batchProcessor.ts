@@ -147,10 +147,11 @@ async function auditSinglePageWithRetry(
   // Set timeout to abort if takes too long
   let abortTimeout: NodeJS.Timeout | null = null;
   if (!abortSignal && internalAbortController) {
+    const abortBufferMs = CONFIG.platform.isNetlify ? 2000 : 5000; // 2s on Netlify (stay under 26s), 5s elsewhere
     abortTimeout = setTimeout(() => {
       console.error(`[auditSinglePageWithRetry] ⚠️ Aborting audit for ${url} - exceeded timeout`);
       internalAbortController.abort('Audit timeout exceeded');
-    }, config.timeoutPerPage + 5000); // 5 seconds buffer
+    }, config.timeoutPerPage + abortBufferMs);
   }
 
   let lastError: Error | null = null;
@@ -456,7 +457,7 @@ export async function processBatches(
               console.error(`[processBatches] ⚠️ WATCHDOG: Failed to mark page as failed: ${err.message}`);
             });
           }
-        }, config.timeoutPerPage + 5000); // 5s buffer after timeout
+        }, config.timeoutPerPage + (CONFIG.platform.isNetlify ? 2000 : 5000)); // 2s buffer on Netlify, 5s elsewhere
 
         // Declare timeoutId outside try-catch so it's accessible in both
         let timeoutId: NodeJS.Timeout | null = null;
