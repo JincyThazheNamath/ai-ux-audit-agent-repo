@@ -104,27 +104,53 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
         // Reset retry counts on successful fetch
         setRetryCount(0);
         progressCheckFailureCount.current = 0;
-        setProgress(data);
-
-        // Backup: if auditing and no progress for 45s, trigger batch once to resume chain
-        if (data.status === 'auditing' && data.pageResults?.length) {
-          const completed = data.completedPages ?? 0;
-          const pending = data.pageResults.filter((p: { status: string }) => p.status === 'pending' || p.status === 'processing').length;
-          const now = Date.now();
-          if (completed !== lastCompletedRef.current) {
-            lastCompletedRef.current = completed;
-            lastProgressTimeRef.current = now;
-            resumeTriggeredRef.current = false;
-          } else if (pending > 0 && (now - lastProgressTimeRef.current) > STUCK_THRESHOLD_MS && !resumeTriggeredRef.current) {
+        
+        // CRITICAL FIX: Trigger batch processing immediately when status is 'auditing' with pending pages
+        // This ensures retry works even if retry API's fetch() fails
+        const previousStatus = progress?.status;
+        const pendingPages = data.pageResults?.filter((p: { status: string }) => p.status === 'pending' || p.status === 'processing').length || 0;
+        const shouldTriggerBatch = data.status === 'auditing' && pendingPages > 0;
+        
+        // Trigger batch if:
+        // 1. Status just changed to 'auditing' (retry was triggered)
+        // 2. OR status is 'auditing' and no progress for 45s (stuck detection)
+        const now = Date.now();
+        const isStatusChange = previousStatus !== 'auditing' && data.status === 'auditing';
+        const isStuck = data.status === 'auditing' && 
+                        pendingPages > 0 && 
+                        (now - lastProgressTimeRef.current) > STUCK_THRESHOLD_MS && 
+                        !resumeTriggeredRef.current;
+        
+        if (shouldTriggerBatch && (isStatusChange || isStuck)) {
+          if (isStatusChange) {
+            console.log(`[Progress] ✅ Status changed to 'auditing' with ${pendingPages} pending pages - triggering batch immediately`);
+            lastProgressTimeRef.current = now; // Reset timer
+            resumeTriggeredRef.current = true; // Prevent duplicate triggers
+          } else if (isStuck) {
             resumeTriggeredRef.current = true;
-            console.log(`[Progress] No progress for ${(now - lastProgressTimeRef.current) / 1000}s, triggering batch to resume (${pending} pending)`);
-            fetch('/api/audit/batch', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ jobId })
-            }).then((r) => console.log(`[Progress] Resume trigger: ${r.ok ? 'ok' : r.status}`)).catch((e) => console.error('[Progress] Resume trigger failed:', e));
+            console.log(`[Progress] ⚠️ No progress for ${(now - lastProgressTimeRef.current) / 1000}s, triggering batch to resume (${pendingPages} pending)`);
           }
+          
+          // Trigger batch processing
+          fetch('/api/audit/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jobId })
+          }).then((r) => {
+            console.log(`[Progress] ✅ Batch trigger: ${r.ok ? 'success' : `failed (${r.status})`}`);
+          }).catch((e: any) => {
+            console.error('[Progress] ❌ Batch trigger failed:', e.message);
+          });
         }
+        
+        // Update progress tracking
+        if (data.completedPages !== lastCompletedRef.current) {
+          lastCompletedRef.current = data.completedPages ?? 0;
+          lastProgressTimeRef.current = now;
+          resumeTriggeredRef.current = false; // Reset on progress
+        }
+        
+        setProgress(data);
 
         if (data.status === 'completed') {
           if (data.finalResult) {

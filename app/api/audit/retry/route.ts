@@ -75,67 +75,61 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Update job status to 'auditing' to resume processing
-    // CRITICAL: Don't await - return response immediately, then trigger batch in background
-    // This prevents retry API from timing out in Netlify
-    updateStatus(jobId, 'auditing', `Retrying ${resetCount} failed pages...`).catch(e => {
-      console.error(`[Retry] ⚠️ Failed to update status: ${e.message}`);
-    });
+    // CRITICAL: Await status update to ensure it's saved before returning
+    await updateStatus(jobId, 'auditing', `Retrying ${resetCount} failed pages...`);
+    console.log(`[Retry] ✅ Status updated to 'auditing'`);
 
-    // 5. Trigger batch processing for the retry pages (fire-and-forget)
-    // CRITICAL: Return response immediately, trigger batch asynchronously
-    // This ensures retry API completes quickly and doesn't timeout
+    // 5. Trigger batch processing for the retry pages
+    // CRITICAL FIX: In Netlify serverless, fetch() to same origin may fail
+    // We have two mechanisms:
+    // 1. Try to trigger batch via fetch (works in most cases)
+    // 2. Progress polling component will detect 'auditing' status and trigger batch automatically
+    
     const origin = new URL(request.url).origin;
     const batchApiUrl = `${origin}/api/audit/batch`;
     
-    console.log(`[Retry] 🔗 Triggering batch processing at: ${batchApiUrl} (fire-and-forget)`);
+    console.log(`[Retry] 🔗 Attempting to trigger batch processing at: ${batchApiUrl}`);
 
-    // Fire-and-forget: Don't await - return immediately
-    // The batch API will handle processing, and progress polling will show updates
-    fetch(batchApiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId })
-    }).then((res) => {
-      if (res.ok) {
-        console.log(`[Retry] ✅ Batch processing triggered successfully`);
+    // Try to trigger batch processing with timeout
+    // If this fails, progress polling will pick it up automatically
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout - quick attempt
+      
+      const response = await fetch(batchApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId }),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        console.log(`[Retry] ✅ Batch processing triggered successfully via fetch`);
       } else {
-        console.error(`[Retry] ⚠️ Batch trigger returned ${res.status}`);
-        // Retry once after 1s (runs in background)
-        setTimeout(() => {
-          fetch(batchApiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jobId })
-          }).then((r) => {
-            console.log(`[Retry] 🔄 Retry trigger: ${r.ok ? 'ok' : r.status}`);
-          }).catch((e: any) => {
-            console.error(`[Retry] ❌ Retry trigger failed: ${e.message}`);
-          });
-        }, 1000);
+        const errorText = await response.text().catch(() => 'Unknown error');
+        console.warn(`[Retry] ⚠️ Batch trigger returned ${response.status}: ${errorText}`);
+        console.log(`[Retry] ℹ️ Progress polling will trigger batch processing automatically (fallback)`);
       }
-    }).catch((e: any) => {
-      console.error(`[Retry] ❌ Failed to trigger batch processing: ${e.message}`);
-      // Retry once after 1s (runs in background)
-      setTimeout(() => {
-        fetch(batchApiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId })
-        }).then((r) => {
-          console.log(`[Retry] 🔄 Retry trigger: ${r.ok ? 'ok' : r.status}`);
-        }).catch((err: any) => {
-          console.error(`[Retry] ❌ Retry trigger failed: ${err.message}`);
-        });
-      }, 1000);
-    });
+    } catch (fetchError: any) {
+      // Fetch failed - this is OK, progress polling will handle it
+      if (fetchError.name === 'AbortError') {
+        console.log(`[Retry] ⏱️ Batch trigger timeout (expected) - progress polling will handle it`);
+      } else {
+        console.warn(`[Retry] ⚠️ Could not trigger batch via fetch: ${fetchError.message}`);
+      }
+      console.log(`[Retry] ℹ️ Progress polling component will detect 'auditing' status and trigger batch automatically`);
+      console.log(`[Retry] ℹ️ This fallback ensures retry works even if fetch() fails in serverless`);
+    }
 
-    // Return immediately - batch processing will continue in background
-    // Progress polling will show updates as pages are processed
+    // Return success - batch processing will be triggered either by fetch() or progress polling
+    // The SiteAuditProgress component checks for status change to 'auditing' and triggers batch immediately
     return NextResponse.json({
       success: true,
       jobId,
       resetCount,
-      message: `Retry initiated for ${resetCount} failed pages. Processing will continue in the background.`
+      message: `Retry initiated for ${resetCount} failed pages. Processing will continue automatically.`
     });
 
   } catch (error: any) {

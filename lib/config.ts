@@ -26,15 +26,15 @@ export const CONFIG = {
     progressEndpointTimeout: isProduction ? (isNetlify ? 15000 : 20000) : 10000,
   },
   batch: {
-    // Netlify Pro: 26s max function timeout
-    // Processing one page at a time with optimized timeouts
-    // Page timeout: 22s (includes page load + AI analysis + DB save)
-    // AI analysis timeout: 15s (fits within page timeout)
-    // Total per page: ~22s max, leaving 4s buffer for Netlify overhead (DB queries, function startup, etc.)
-    // NOTE: Using 22s instead of 18s to reduce false failures while still fitting in 26s limit
-    timeoutPerPage: isProduction && isNetlify ? 22000 : 20000, // 22s for Netlify (balanced), 20s elsewhere
+    // Netlify Pro: 26s max function timeout (HARD LIMIT - cannot exceed)
+    // Processing one page at a time with maximized timeouts
+    // Page timeout: 24s (includes page load + AI analysis + DB save)
+    // AI analysis timeout: 17s (fits within page timeout)
+    // Total per page: ~24s max, leaving 2s buffer for Netlify overhead (DB queries, function startup, etc.)
+    // OPTIMIZED: Increased from 22s to 24s to handle slower .com websites while staying within 26s limit
+    timeoutPerPage: isProduction && isNetlify ? 24000 : 20000, // 24s for Netlify (maximized), 20s elsewhere
     delayBetweenRequests: 500, // 500ms delay (original)
-    aiAnalysisTimeout: isProduction && isNetlify ? 15000 : 20000, // 15s for Netlify (fits in 22s page timeout), 20s elsewhere
+    aiAnalysisTimeout: isProduction && isNetlify ? 17000 : 20000, // 17s for Netlify (fits in 24s page timeout), 20s elsewhere
     maxRetries: 1, // Single retry
   },
   logging: {

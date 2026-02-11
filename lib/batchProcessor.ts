@@ -150,7 +150,7 @@ async function auditSinglePageWithRetry(
     abortTimeout = setTimeout(() => {
       console.error(`[auditSinglePageWithRetry] ⚠️ Aborting audit for ${url} - exceeded timeout`);
       internalAbortController.abort('Audit timeout exceeded');
-    }, config.timeoutPerPage + 5000); // 5 seconds buffer
+    }, config.timeoutPerPage + 2000); // 2 seconds buffer (reduced since we're using more of the 26s limit)
   }
 
   let lastError: Error | null = null;
