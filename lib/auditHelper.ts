@@ -233,14 +233,14 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
       throw new Error(`Audit aborted before page navigation: ${abortSignal.reason || 'Signal aborted'}`);
     }
 
-    // Navigate to page with optimized timeouts for slower websites
+    // Navigate to page with aggressive timeouts to prevent hanging
     console.log(`  📄 Loading page: ${targetUrl.toString()}`);
-    // Optimized for Netlify 26s limit - maximized to handle slower .com websites
-    // Netlify: ~14s page load + ~17s AI analysis + ~2s overhead = 33s max, but timeoutPerPage=24s will catch it
+    // Optimized for Netlify 26s limit
+    // Netlify: ~12s page load + ~15s AI analysis + ~2s overhead = 29s max, but timeoutPerPage=22s will catch it
     // Other: ~12s page load + ~20s AI analysis = 32s max per page
-    // Increased timeouts to handle slower websites while staying within Netlify's 26s limit
-    const PAGE_LOAD_TIMEOUT = isNetlify ? 14000 : 12000; // 14s for Netlify (increased for slower sites), 12s elsewhere
-    const DOM_CONTENT_TIMEOUT = isNetlify ? 12000 : 10000; // 12s for Netlify (increased), 10s elsewhere
+    // Using slightly longer timeouts to reduce false failures while still respecting Netlify's 26s limit
+    const PAGE_LOAD_TIMEOUT = isNetlify ? 12000 : 12000; // 12s for both (balanced)
+    const DOM_CONTENT_TIMEOUT = isNetlify ? 10000 : 10000; // 10s for both (balanced)
 
     try {
       // Use AbortController to ensure we can cancel if needed
@@ -305,8 +305,8 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
 
     // Extract page data with timeout; use fallback if response data fails to load
     console.log(`  📊 Extracting page data...`);
-    // Increased timeout for slower websites - data extraction happens during page load, so this is a safety net
-    const DATA_EXTRACTION_TIMEOUT = isNetlify ? 12000 : 15000; // 12s for Netlify (increased for slower sites), 15s elsewhere
+    // Balanced timeout - data extraction happens during page load, so this is a safety net
+    const DATA_EXTRACTION_TIMEOUT = isNetlify ? 10000 : 15000; // 10s for Netlify (balanced), 15s elsewhere
 
     const minimalPageDataFallback = {
       title: '',
