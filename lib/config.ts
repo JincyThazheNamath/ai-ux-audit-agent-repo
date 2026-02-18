@@ -23,7 +23,7 @@ export const CONFIG = {
   },
   api: {
     // Progress endpoint timeout
-    progressEndpointTimeout: isProduction ? (isNetlify ? 20000 : 20000) : 10000,
+    progressEndpointTimeout: isProduction ? (isNetlify ? 15000 : 20000) : 10000,
   },
   batch: {
     // Netlify Pro: 26s max function timeout
@@ -34,7 +34,7 @@ export const CONFIG = {
     // NOTE: Using 22s instead of 18s to reduce false failures while still fitting in 26s limit
     timeoutPerPage: isProduction && isNetlify ? 22000 : 20000, // 22s for Netlify (balanced), 20s elsewhere
     delayBetweenRequests: 500, // 500ms delay (original)
-    aiAnalysisTimeout: isProduction && isNetlify ? 20000 : 20000, // 15s for Netlify (fits in 22s page timeout), 20s elsewhere
+    aiAnalysisTimeout: isProduction && isNetlify ? 15000 : 20000, // 15s for Netlify (fits in 22s page timeout), 20s elsewhere
     maxRetries: 1, // Single retry
   },
   logging: {
