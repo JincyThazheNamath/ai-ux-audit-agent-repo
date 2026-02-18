@@ -10,26 +10,27 @@ const isProduction = isNetlify || isVercel || process.env.NODE_ENV === 'producti
 
 export const CONFIG = {
   redis: {
-    // Connection timeout: same as dev for all environments
-    connectionTimeout: isProduction ? (isNetlify ? 10000 : 30000) : 10000, // 10s Netlify (same as dev), 30s Vercel, 10s dev
+    // Connection timeout: longer in production for serverless cold starts
+    connectionTimeout: isProduction ? (isNetlify ? 20000 : 30000) : 10000, // 20s Netlify, 30s Vercel, 10s dev
     // Socket-level timeout (for redis client)
-    socketTimeout: isProduction ? (isNetlify ? 10000 : 30000) : 10000, // 10s Netlify (same as dev), 30s Vercel, 10s dev
+    socketTimeout: isProduction ? (isNetlify ? 20000 : 30000) : 10000,
     // Retry configuration
-    maxRetries: isProduction ? (isNetlify ? 1 : 3) : 1, // Same as dev for Netlify
+    maxRetries: isProduction ? (isNetlify ? 2 : 3) : 1, // Fewer retries for Netlify due to timeout limits
     retryDelay: {
-      base: isProduction ? (isNetlify ? 500 : 1000) : 500, // Same as dev for Netlify
-      max: isProduction ? (isNetlify ? 2000 : 5000) : 2000, // Same as dev for Netlify
+      base: isProduction ? (isNetlify ? 500 : 1000) : 500, // Faster retries for Netlify
+      max: isProduction ? (isNetlify ? 3000 : 5000) : 2000,
     },
   },
   api: {
-    // Progress endpoint timeout: same as dev for Netlify
-    progressEndpointTimeout: isProduction ? (isNetlify ? 10000 : 20000) : 10000, // 10s Netlify (same as dev), 20s Vercel, 10s dev
+    // Progress endpoint timeout
+    progressEndpointTimeout: isProduction ? (isNetlify ? 15000 : 20000) : 10000,
   },
   batch: {
-    // Netlify timeouts match dev environment
-    timeoutPerPage: isProduction && isNetlify ? 20000 : 20000, // 20s for Netlify (same as dev), 20s elsewhere
+    // Netlify Pro: 26s max function timeout
+    // Give slow/heavy pages (e.g. tabb.cc) more room: 24s per page, 18s AI, ~6s for load+extract+overhead
+    timeoutPerPage: isProduction && isNetlify ? 24000 : 20000, // 24s for Netlify (slow-page friendly), 20s elsewhere
     delayBetweenRequests: 500, // 500ms delay (original)
-    aiAnalysisTimeout: isProduction && isNetlify ? 20000 : 20000, // 20s for Netlify (same as dev), 20s elsewhere
+    aiAnalysisTimeout: isProduction && isNetlify ? 18000 : 20000, // 18s for Netlify (fits in 24s), 20s elsewhere
     maxRetries: 1, // Single retry
   },
   logging: {

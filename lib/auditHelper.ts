@@ -235,9 +235,9 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
 
     // Navigate to page with aggressive timeouts to prevent hanging
     console.log(`  📄 Loading page: ${targetUrl.toString()}`);
-    // Page load timeouts: same as dev for all environments
-    const PAGE_LOAD_TIMEOUT = 12000; // 12s for all (same as dev)
-    const DOM_CONTENT_TIMEOUT = 10000; // 10s for all (same as dev)
+    // Netlify: 26s limit; timeoutPerPage=24s gives ~6s for load+extract (AI 18s). Elsewhere: 20s per page.
+    const PAGE_LOAD_TIMEOUT = isNetlify ? 12000 : 12000; // 12s for both (balanced)
+    const DOM_CONTENT_TIMEOUT = isNetlify ? 10000 : 10000; // 10s for both (balanced)
 
     try {
       // Use AbortController to ensure we can cancel if needed
@@ -251,8 +251,8 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
           timeout: DOM_CONTENT_TIMEOUT
         });
         clearTimeout(timeoutId);
-        // Wait for critical resources (same as dev: 2s for all)
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait for critical resources (1s on Netlify to stay within 24s page budget, 2s elsewhere)
+        await new Promise(resolve => setTimeout(resolve, isNetlify ? 1000 : 2000));
         console.log(`  ✅ Page loaded successfully (domcontentloaded)`);
       } catch (domError: any) {
         clearTimeout(timeoutId);
@@ -302,8 +302,8 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
 
     // Extract page data with timeout; use fallback if response data fails to load
     console.log(`  📊 Extracting page data...`);
-    // Data extraction timeout: same as dev for all environments
-    const DATA_EXTRACTION_TIMEOUT = 15000; // 15s for all (same as dev)
+    // Balanced timeout - data extraction happens during page load, so this is a safety net
+    const DATA_EXTRACTION_TIMEOUT = isNetlify ? 10000 : 15000; // 10s for Netlify (balanced), 15s elsewhere
 
     const minimalPageDataFallback = {
       title: '',
