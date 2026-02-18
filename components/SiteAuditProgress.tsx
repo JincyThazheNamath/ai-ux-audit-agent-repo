@@ -39,7 +39,7 @@ export default function SiteAuditProgress({ jobId, onComplete, onError }: SiteAu
   const MAX_FINAL_RESULT_RETRIES = 30; // Max retries for missing finalResult (30 * 1.5s = 45s)
   const SOFT_WARNING_TIME = 15 * 60 * 1000; // At 15 min show "still processing" notice but keep polling
   const MAX_WAIT_TIME = 25 * 60 * 1000; // 25 minutes max wait (40 pages can take 15–20+ min on Netlify)
-  const STUCK_THRESHOLD_MS = 45000; // If no progress for 45s, trigger batch to resume chain
+  const STUCK_THRESHOLD_MS = 28000; // If no progress for 28s, trigger batch to resume chain (covers Netlify first-batch not triggered)
 
   const [longRunningNotice, setLongRunningNotice] = useState(false);
 

@@ -160,14 +160,15 @@ export async function POST(request: NextRequest) {
             await updateStatus(jobId, 'discovering', 'Starting page discovery...');
           }
 
-          // Add timeout for discovery (60 seconds max)
+          // Discovery timeout: on Netlify use 20s so we have ~6s left to update status and fire first batch (26s limit)
+          const discoveryTimeoutMs = process.env.NETLIFY ? 20000 : 60000;
           const discoveryPromise = discoverPagesWithDepth(targetUrl.toString(), {
             maxPages,
             maxDepth,
           });
 
           const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Discovery timeout: Page discovery took longer than 60 seconds')), 60000)
+            setTimeout(() => reject(new Error(`Discovery timeout: Page discovery took longer than ${discoveryTimeoutMs / 1000} seconds`)), discoveryTimeoutMs)
           );
 
           let discoveredPages: Awaited<ReturnType<typeof discoverPagesWithDepth>>;
@@ -310,24 +311,31 @@ export async function POST(request: NextRequest) {
         console.log(`[Background] ✅ Updated job with ${actualPageCount} pages`);
         await debugProgressStore();
 
-        // Step 2: Trigger recursive batch processing
+        // Step 2: Trigger recursive batch processing (fire-and-forget)
+        // CRITICAL: Do NOT await - Netlify kills the function at 26s. If we await the batch
+        // response (~22s), we exceed 26s and get killed before the trigger completes.
+        // Fire-and-forget ensures we stay under 26s; the batch runs in a separate invocation.
+        // If the trigger fails, progress polling will see 'auditing' and client can resume via
+        // SiteAuditProgress STUCK_THRESHOLD (trigger batch after no progress for 28s).
         console.log(`[Background] 🔄 Handing off to batch processor for ${actualPageCount} pages...`);
 
         const batchApiUrl = `${origin}/api/audit/batch`;
-        console.log(`[Background] 🔗 Triggering first batch at: ${batchApiUrl}`);
+        console.log(`[Background] 🔗 Triggering first batch at: ${batchApiUrl} (fire-and-forget)`);
 
-        try {
-          await fetch(batchApiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jobId })
-          });
-          console.log(`[Background] 🚀 First batch triggered successfully`);
-        } catch (triggerError: any) {
+        fetch(batchApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId })
+        }).then((res) => {
+          if (res.ok) {
+            console.log(`[Background] 🚀 First batch triggered successfully`);
+          } else {
+            console.error(`[Background] ❌ First batch returned ${res.status}`);
+          }
+        }).catch((triggerError: any) => {
           console.error(`[Background] ❌ Failed to trigger first batch: ${triggerError.message}`);
-          // If trigger fails, we should update status to failed
-          await updateStatus(jobId, 'failed');
-          await saveFinalResult(jobId, {
+          updateStatus(jobId, 'failed').catch(() => {});
+          saveFinalResult(jobId, {
             error: `Failed to start batch processing: ${triggerError.message}`,
             errorType: 'batch_trigger_failed',
             failedPages: [],
@@ -335,8 +343,8 @@ export async function POST(request: NextRequest) {
             sortedPages: [],
             pageResults: [],
             isMockData: false
-          });
-        }
+          }).catch(() => {});
+        });
       } catch (error: any) {
         // Global background error handler
         backgroundError = error;
