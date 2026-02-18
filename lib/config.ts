@@ -27,10 +27,14 @@ export const CONFIG = {
   },
   batch: {
     // Netlify Pro: 26s max function timeout
-    // Give slow/heavy pages (e.g. tabb.cc) more room: 24s per page, 18s AI, ~6s for load+extract+overhead
-    timeoutPerPage: isProduction && isNetlify ? 24000 : 20000, // 24s for Netlify (slow-page friendly), 20s elsewhere
+    // Processing one page at a time with optimized timeouts
+    // Page timeout: 22s (includes page load + AI analysis + DB save)
+    // AI analysis timeout: 15s (fits within page timeout)
+    // Total per page: ~22s max, leaving 4s buffer for Netlify overhead (DB queries, function startup, etc.)
+    // NOTE: Using 22s instead of 18s to reduce false failures while still fitting in 26s limit
+    timeoutPerPage: isProduction && isNetlify ? 22000 : 20000, // 22s for Netlify (balanced), 20s elsewhere
     delayBetweenRequests: 500, // 500ms delay (original)
-    aiAnalysisTimeout: isProduction && isNetlify ? 18000 : 20000, // 18s for Netlify (fits in 24s), 20s elsewhere
+    aiAnalysisTimeout: isProduction && isNetlify ? 15000 : 20000, // 15s for Netlify (fits in 22s page timeout), 20s elsewhere
     maxRetries: 1, // Single retry
   },
   logging: {

@@ -235,7 +235,10 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
 
     // Navigate to page with aggressive timeouts to prevent hanging
     console.log(`  📄 Loading page: ${targetUrl.toString()}`);
-    // Netlify: 26s limit; timeoutPerPage=24s gives ~6s for load+extract (AI 18s). Elsewhere: 20s per page.
+    // Optimized for Netlify 26s limit
+    // Netlify: ~12s page load + ~15s AI analysis + ~2s overhead = 29s max, but timeoutPerPage=22s will catch it
+    // Other: ~12s page load + ~20s AI analysis = 32s max per page
+    // Using slightly longer timeouts to reduce false failures while still respecting Netlify's 26s limit
     const PAGE_LOAD_TIMEOUT = isNetlify ? 12000 : 12000; // 12s for both (balanced)
     const DOM_CONTENT_TIMEOUT = isNetlify ? 10000 : 10000; // 10s for both (balanced)
 
@@ -251,8 +254,8 @@ export async function auditSinglePage(url: string, abortSignal?: AbortSignal, br
           timeout: DOM_CONTENT_TIMEOUT
         });
         clearTimeout(timeoutId);
-        // Wait for critical resources (1s on Netlify to stay within 24s page budget, 2s elsewhere)
-        await new Promise(resolve => setTimeout(resolve, isNetlify ? 1000 : 2000));
+        // Wait a short time for critical resources (reduced for speed)
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 seconds for critical resources
         console.log(`  ✅ Page loaded successfully (domcontentloaded)`);
       } catch (domError: any) {
         clearTimeout(timeoutId);

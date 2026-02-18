@@ -75,16 +75,22 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Update job status to 'auditing' to resume processing
-    // CRITICAL: Await so when we return 200, status is already 'auditing' and progress polling can trigger batch if fetch fails
-    await updateStatus(jobId, 'auditing', `Retrying ${resetCount} failed pages...`);
-    console.log(`[Retry] ✅ Status updated to 'auditing'`);
+    // CRITICAL: Don't await - return response immediately, then trigger batch in background
+    // This prevents retry API from timing out in Netlify
+    updateStatus(jobId, 'auditing', `Retrying ${resetCount} failed pages...`).catch(e => {
+      console.error(`[Retry] ⚠️ Failed to update status: ${e.message}`);
+    });
 
-    // 5. Trigger batch processing for the retry pages (best-effort; frontend will also trigger on 'auditing')
+    // 5. Trigger batch processing for the retry pages (fire-and-forget)
+    // CRITICAL: Return response immediately, trigger batch asynchronously
+    // This ensures retry API completes quickly and doesn't timeout
     const origin = new URL(request.url).origin;
     const batchApiUrl = `${origin}/api/audit/batch`;
-    console.log(`[Retry] 🔗 Triggering batch processing at: ${batchApiUrl}`);
+    
+    console.log(`[Retry] 🔗 Triggering batch processing at: ${batchApiUrl} (fire-and-forget)`);
 
-    // Fire-and-forget: if this fails (e.g. Netlify self-fetch), progress polling will see 'auditing' and trigger batch
+    // Fire-and-forget: Don't await - return immediately
+    // The batch API will handle processing, and progress polling will show updates
     fetch(batchApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -123,6 +129,8 @@ export async function POST(request: NextRequest) {
       }, 1000);
     });
 
+    // Return immediately - batch processing will continue in background
+    // Progress polling will show updates as pages are processed
     return NextResponse.json({
       success: true,
       jobId,
