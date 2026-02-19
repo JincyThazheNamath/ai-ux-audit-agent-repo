@@ -22,6 +22,10 @@ const FilterDropdown = lazy(() =>
   import(/* webpackChunkName: "filter-dropdown" */ '../components/FilterDropdown')
 );
 
+const isAuditResultShape = (value: any): value is AuditResult => {
+  return !!value && Array.isArray(value.findings) && !!value.summary;
+};
+
 function HomeContent() {
   const { mode } = useViewMode();
   const [url, setUrl] = useState('');
@@ -73,22 +77,32 @@ function HomeContent() {
       setViewMode('overview');
 
     try {
-      const response = await fetch('/api/audit', {
+      const response = await fetch('/api/audit/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(`Server returned non-JSON response (${response.status}).`);
+      }
 
       if (!response.ok) {
         throw new Error(data.error || 'Audit failed');
       }
 
-      setResult(data);
+      if (!data.jobId) {
+        throw new Error('Audit job was not created');
+      }
+
+      setSiteAuditJobId(data.jobId);
+      // Keep loading true - SiteAuditProgress will finish flow and call onComplete/onError
     } catch (err: any) {
       setError(err.message || 'Failed to perform audit');
-    } finally {
       setLoading(false);
     }
     } else {
@@ -99,13 +113,19 @@ function HomeContent() {
       setViewMode('overview');
 
       try {
-        const response = await fetch('/api/audit/site', {
+        const response = await fetch('/api/audit/site/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url, maxPages: 40, maxDepth: 3 }),
         });
 
-        const data = await response.json();
+        const text = await response.text();
+        let data: any = {};
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch {
+          throw new Error(`Server returned non-JSON response (${response.status}).`);
+        }
 
         if (!response.ok) {
           throw new Error(data.error || 'Failed to start full-site audit');
@@ -123,7 +143,17 @@ function HomeContent() {
   };
 
   const handleSiteAuditComplete = (result: any) => {
-    setSiteAuditResult(result);
+    if (auditMode === 'single') {
+      if (isAuditResultShape(result)) {
+        setResult(result);
+        setSiteAuditResult(null);
+        setSiteAuditJobId(null);
+      } else {
+        setError('Audit completed but returned an invalid result payload.');
+      }
+    } else {
+      setSiteAuditResult(result);
+    }
     setLoading(false);
     setViewMode('overview');
   };
@@ -173,7 +203,13 @@ function HomeContent() {
         }),
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(`Server returned non-JSON response (${response.status}).`);
+      }
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to retry failed pages');
@@ -205,7 +241,7 @@ function HomeContent() {
   };
 
   const filteredFindings = useMemo(() => {
-    if (!result) return [];
+    if (!result || !Array.isArray(result.findings)) return [];
     return result.findings.filter(finding => {
       const categoryMatch = filterCategory === 'all' || finding.category === filterCategory;
       const severityMatch = filterSeverity === 'all' || finding.severity === filterSeverity;

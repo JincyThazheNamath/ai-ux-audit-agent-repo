@@ -483,9 +483,11 @@ export async function updatePageProgress(
   let progress = progressStore.get(jobId);
   if (!progress && useKv && kv) {
     try {
-      progress = await kv.get(`audit:progress:${jobId}`);
-      if (progress) {
-        progressStore.set(jobId, progress);
+      const kvData = await kv.get(`audit:progress:${jobId}`) as string | null;
+      if (kvData) {
+        const parsed = JSON.parse(kvData) as AuditProgress;
+        progress = parsed;
+        progressStore.set(jobId, parsed);
       }
     } catch (e) {
       // Ignore KV errors
@@ -760,47 +762,74 @@ export async function saveFinalResult(jobId: string, finalResult: any): Promise<
     return;
   }
 
-  // CRITICAL OPTIMIZATION: Strip screenshots and reduce data size to prevent Redis OOM
-  const optimizedFinalResult = {
-    aggregated: finalResult.aggregated ? {
-      ...finalResult.aggregated,
-      // Remove screenshots and limit findings from aggregated pageResults
-      pageResults: finalResult.aggregated.pageResults?.map((page: any) => {
+  const isSinglePageResult =
+    !!finalResult &&
+    Array.isArray(finalResult.findings) &&
+    !!finalResult.summary;
+
+  const isFullSiteResult =
+    !!finalResult &&
+    (
+      finalResult.aggregated !== undefined ||
+      Array.isArray(finalResult.sortedPages) ||
+      Array.isArray(finalResult.pageResults)
+    );
+
+  let optimizedFinalResult: any;
+
+  if (isSinglePageResult) {
+    // Preserve single-page shape expected by the UI.
+    const { screenshot, html, ...singleWithoutLargeData } = finalResult;
+    optimizedFinalResult = {
+      ...singleWithoutLargeData,
+      findings: finalResult.findings.slice(0, 25),
+    };
+  } else if (isFullSiteResult) {
+    // CRITICAL OPTIMIZATION: Strip screenshots and reduce data size to prevent Redis OOM
+    optimizedFinalResult = {
+      aggregated: finalResult.aggregated ? {
+        ...finalResult.aggregated,
+        // Remove screenshots and limit findings from aggregated pageResults
+        pageResults: finalResult.aggregated.pageResults?.map((page: any) => {
+          const { screenshot, html, ...pageWithoutLargeData } = page;
+          return {
+            ...pageWithoutLargeData,
+            findings: page.findings?.slice(0, 20) || [] // Limit to 20 findings per page
+          };
+        }) || []
+      } : finalResult.aggregated,
+      
+      sortedPages: finalResult.sortedPages?.map((page: any) => {
+        // Remove full result object, keep only summary
+        const { result, ...pageSummary } = page;
+        if (result) {
+          const { screenshot, html, ...resultWithoutLargeData } = result;
+          return {
+            ...pageSummary,
+            result: {
+              ...resultWithoutLargeData,
+              findings: result.findings?.slice(0, 10) || [] // Limit findings
+            }
+          };
+        }
+        return pageSummary;
+      }) || [],
+      
+      // Limit pageResults size - remove screenshots and limit findings
+      pageResults: finalResult.pageResults?.map((page: any) => {
         const { screenshot, html, ...pageWithoutLargeData } = page;
         return {
           ...pageWithoutLargeData,
-          findings: page.findings?.slice(0, 20) || [] // Limit to 20 findings per page
+          findings: page.findings?.slice(0, 10) || [] // Limit to 10 findings
         };
-      }) || []
-    } : finalResult.aggregated,
-    
-    sortedPages: finalResult.sortedPages?.map((page: any) => {
-      // Remove full result object, keep only summary
-      const { result, ...pageSummary } = page;
-      if (result) {
-        const { screenshot, html, ...resultWithoutLargeData } = result;
-        return {
-          ...pageSummary,
-          result: {
-            ...resultWithoutLargeData,
-            findings: result.findings?.slice(0, 10) || [] // Limit findings
-          }
-        };
-      }
-      return pageSummary;
-    }) || [],
-    
-    // Limit pageResults size - remove screenshots and limit findings
-    pageResults: finalResult.pageResults?.map((page: any) => {
-      const { screenshot, html, ...pageWithoutLargeData } = page;
-      return {
-        ...pageWithoutLargeData,
-        findings: page.findings?.slice(0, 10) || [] // Limit to 10 findings
-      };
-    }) || [],
-    
-    failedPages: finalResult.failedPages || []
-  };
+      }) || [],
+      
+      failedPages: finalResult.failedPages || []
+    };
+  } else {
+    // Keep unexpected/error payloads as-is so polling can display error details.
+    optimizedFinalResult = finalResult;
+  }
 
   // Calculate size before saving
   const resultJson = JSON.stringify(optimizedFinalResult);
