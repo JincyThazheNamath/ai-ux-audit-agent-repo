@@ -20,7 +20,7 @@ function generateUUID(): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const { url, maxPages = 40, maxDepth = 3, useMockData = false, retryUrls } = await request.json();
+    const { url, maxPages = 40, maxDepth = 3, useMockData = false, retryUrls, jobId: incomingJobId } = await request.json();
 
     // Check environment variable for mock data mode
     const forceMockData = process.env.USE_MOCK_DATA === 'true' || useMockData;
@@ -37,8 +37,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
     }
 
-    // Generate job ID
-    const jobId = generateUUID();
+    // Generate job ID if not provided by queued starter
+    const jobId = incomingJobId || generateUUID();
 
     // Capture origin for batch processing url construction
     // This handles non-standard ports (e.g. 3001) automatically
@@ -523,4 +523,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

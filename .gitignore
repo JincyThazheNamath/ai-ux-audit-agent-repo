@@ -48,3 +48,6 @@ next-env.d.ts
 # Temporary files
 dev-server-output.txt
 *.log
+
+jobId
+status
